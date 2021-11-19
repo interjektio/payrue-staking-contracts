@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import "hardhat/console.sol";
+
 /*
 TODO:
 [x] Stake VPROPEL, receive PROPEL
@@ -14,10 +16,11 @@ TODO:
 [x] Unstake is possible after 1 year has passed from the staking
 [x] On unstake, get back VPROPEL
 [x] Min stake amount 10k VPROPEL
-[ ] Emergency withdraw (by admin)
+[ ] Withdraw non-locked tokens by admin
 [ ] Withdraw other tokens by admin
+[ ] Emergency withdraw (by admin) ??
 [ ] Upgradeable ??
-[ ] Pause
+[ ] Pause ??
 [ ] Force unstake user?
 */
 
@@ -60,15 +63,18 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     uint256 public constant lockedPeriod = 365 days;
     uint256 public constant yieldPeriod = 365 days;
     uint256 public constant dustAmount = 1 ether;  // Amount of PROPEL/VPROPEL considered insignificant
+    // TODO: make changeable
     uint256 public constant minStakeAmount = 10_000 ether; // should be at least 1
 
-    IERC20 public stakingToken;  // VPROPEL
-    IERC20 public rewardToken; // PROPEL
+    IERC20 public stakingToken;
+    IERC20 public rewardToken;
+    bool public stakingTokenIsRewardToken;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
     uint256 public totalAmountStaked = 0;
-    uint256 public totalRewardLocked = 0;
+    uint256 public totalGuaranteedReward = 0;
+    uint256 public totalStoredReward = 0;
 
     constructor(
         address _stakingToken,
@@ -78,6 +84,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     {
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
+        stakingTokenIsRewardToken = stakingToken == rewardToken;
     }
 
     // PUBLIC USER API
@@ -91,6 +98,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     nonReentrant
     {
         require(amount >= minStakeAmount, "Minimum stake amount not met");
+        // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
         require(
             availableToStakeOrReward() >= amount,
             "Not enough rewards left to accept new stakes for given amount"
@@ -110,11 +118,11 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             timestamp: block.timestamp
         }));
         userData.amountStaked += amount;
+        totalAmountStaked += amount;
         userData.guaranteedReward += amount;
+        totalGuaranteedReward += amount;
         userData.storedRewardUpdatedOn = block.timestamp;  // may waste some gas, but would rather be safe than sorry
 
-        totalAmountStaked += amount;
-        totalRewardLocked += amount;
 
         emit Staked(
             msg.sender,
@@ -123,7 +131,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     }
 
     function claimReward()
-    external
+    public
     virtual
     nonReentrant
     {
@@ -133,7 +141,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     function unstake(
         uint256 amount
     )
-    external
+    public
     virtual
     nonReentrant
     {
@@ -141,7 +149,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     }
 
     function exit()
-    external
+    public
     virtual
     nonReentrant
     {
@@ -156,7 +164,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         delete stakingDataByUser[msg.sender];
     }
 
-
     // PUBLIC VIEWS AND UTILITIES
     // ==========================
 
@@ -165,7 +172,19 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     view
     returns (uint256 stakeable)
     {
-        return rewardToken.balanceOf(address(this)) - totalRewardLocked;
+        stakeable = rewardToken.balanceOf(address(this)) - totalLockedReward();
+        if (stakingTokenIsRewardToken) {
+            stakeable -= totalAmountStaked;
+        }
+    }
+
+
+    function totalLockedReward()
+    public
+    view
+    returns (uint256 locked)
+    {
+        locked = totalStoredReward + totalGuaranteedReward;
     }
 
     function rewardClaimable(
@@ -180,13 +199,24 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         reward += _calculateStoredRewardToAdd(userData);
     }
 
+    function staked(
+        address user
+    )
+    public
+    view
+    returns (uint256 amount)
+    {
+        UserStakingData storage userData = stakingDataByUser[user];
+        return userData.amountStaked;
+    }
+
     // OWNER API
     // =========
 
     function payRewardToUser(
         address user
     )
-    external
+    public
     virtual
     onlyOwner
     nonReentrant
@@ -211,7 +241,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         }
 
         userData.storedReward = 0;
-        totalRewardLocked -= reward;
+        totalStoredReward -= reward;
 
         require(
             rewardToken.transfer(user, reward),
@@ -274,7 +304,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         // and we might even end up in a state where the user has guaranteed reward and 0 staked amount, which would
         // mean that the guaranteed reward can never be cleared.
         if (
-            userData.guaranteedReward > 0 && (userData.amountStaked < dustAmount || userData.guaranteedReward < dustAmount)
+            userData.guaranteedReward > 0 && (userData.amountStaked <= dustAmount || userData.guaranteedReward <= dustAmount)
         ) {
             userData.storedReward += userData.guaranteedReward;
             userData.guaranteedReward = 0;
@@ -300,7 +330,14 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         uint256 addedStoredReward = _calculateStoredRewardToAdd(userData);
         if (addedStoredReward != 0) {
             userData.storedReward += addedStoredReward;
-            userData.guaranteedReward -= addedStoredReward;
+            totalStoredReward += addedStoredReward;
+            if (addedStoredReward > userData.guaranteedReward) {
+                totalGuaranteedReward -= userData.guaranteedReward;
+                userData.guaranteedReward = 0;
+            } else {
+                userData.guaranteedReward -= addedStoredReward;
+                totalGuaranteedReward -= addedStoredReward;
+            }
             userData.storedRewardUpdatedOn = block.timestamp;
         }
     }

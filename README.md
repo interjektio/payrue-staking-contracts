@@ -1,5 +1,5 @@
-Hardhat Template
-================
+PayRue Staking Contracts
+========================
 
-Todo: write more here
+TODO: write nice readme
 
