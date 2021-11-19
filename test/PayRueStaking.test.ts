@@ -2,7 +2,7 @@ import {expect} from 'chai';
 import {beforeEach, describe, it} from 'mocha';
 import {ethers} from 'hardhat';
 import {BigNumberish, constants, Contract, Signer} from 'ethers';
-import {eth, timeTravel} from './utils';
+import {eth, getTokenBalanceChange, timeTravel} from './utils';
 
 const CONTRACTS = [
     //'PayRueStaking',
