@@ -236,7 +236,28 @@ for (let contractName of CONTRACTS) {
                 );
             });
 
-            // TODO: test claiming after there's no more to claim
+            it('claim when there is nothing more to claim', async () => {
+                await initTest({
+                    rewardAmount: '20 000',
+                    stakedAmount: '20 000',
+                });
+
+                await timeTravel({ days: 400 }); // more than period
+
+                let tx = await staking.claimReward();
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('20 000'));
+
+                await timeTravel({ days: 182, hours: 12 });
+
+                tx = await staking.claimReward();
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('0'));
+
+                await rewardToken.mint(staking.address, eth('10 000'));
+
+                tx = await staking.claimReward();
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('10 000'));
+            });
+
             // TODO: test claiming with multiple users
             // TODO: test claiming very small amounts (might result in rounding errors)
 
