@@ -1,7 +1,7 @@
 import {expect} from 'chai';
-import {beforeEach, describe, it} from 'mocha';
+import {beforeEach, describe, it, Test} from 'mocha';
 import {ethers} from 'hardhat';
-import {BigNumber, constants, Contract, Signer} from 'ethers';
+import {BigNumber, constants, Contract, ContractFactory, Signer} from 'ethers';
 import {
     eth,
     getTokenBalanceChange,
@@ -40,6 +40,7 @@ for (let {
         let adminStaking: Contract;
         let stakingToken: Contract;
         let rewardToken: Contract;
+        let TestToken: ContractFactory;
 
         let ownerAccount: Signer;
         let stakerAccount: Signer;
@@ -57,7 +58,7 @@ for (let {
             stakerAddress = await stakerAccount.getAddress();
             anotherAddress = await anotherAccount.getAddress();
 
-            const TestToken = await ethers.getContractFactory('TestToken');
+            TestToken = await ethers.getContractFactory('TestToken');
             stakingToken = await TestToken.deploy("Staking token", "STAKING");
             if (stakingTokenIsRewardToken) {
                 rewardToken = stakingToken;
@@ -353,6 +354,100 @@ for (let {
                 tx = await staking.connect(anotherAccount).exit();
                 expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('15 000'));
             });
+        });
+
+        describe('withdrawTokens', () => {
+            beforeEach(async () => {
+                await initTest({
+                    rewardAmount: '20 000',
+                    stakerBalance: '10 000',
+                    stakedAmount: '10 000'
+                });
+            });
+
+            it('non-owners cannot withdraw', async () => {
+                await expect(
+                    staking.withdrawTokens(stakingToken.address, eth('1 000'))
+                ).to.be.revertedWith('Ownable: caller is not the owner');
+            });
+
+            it('owner can withdraw rewardToken up to locked amount', async () => {
+                const maxAmount = eth('10 000');
+                await expect(
+                    adminStaking.withdrawTokens(rewardToken.address, maxAmount.add(1))
+                ).to.be.revertedWith('Can only withdraw up to balance minus locked amount');
+
+                await expect(
+                    () => adminStaking.withdrawTokens(rewardToken.address, maxAmount)
+                ).to.changeTokenBalances(
+                    rewardToken,
+                    [ownerAccount, staking],
+                    [maxAmount, maxAmount.mul(-1)]
+                );
+
+                expect(await adminStaking.availableToStakeOrReward()).to.equal(0);
+
+                await expect(
+                    adminStaking.withdrawTokens(rewardToken.address, 1)
+                ).to.be.revertedWith('Can only withdraw up to balance minus locked amount');
+
+                await rewardToken.mint(adminStaking.address, 1000);
+                await expect(
+                    () => adminStaking.withdrawTokens(rewardToken.address, 1000)
+                ).to.changeTokenBalances(
+                    rewardToken,
+                    [ownerAccount, staking],
+                    [1000, -1000]
+                );
+            });
+
+            it('owner can withdraw random tokens', async() => {
+                const randomToken = await TestToken.deploy('Random token', 'RANDOM');
+                await expect(
+                    adminStaking.withdrawTokens(randomToken.address, 1)
+                ).to.be.reverted;
+
+                await randomToken.mint(adminStaking.address, 1234);
+
+                await expect(
+                    adminStaking.withdrawTokens(randomToken.address, 1235)
+                ).to.be.reverted;
+
+                await expect(
+                    () => adminStaking.withdrawTokens(randomToken.address, 1234)
+                ).to.changeTokenBalances(
+                    randomToken,
+                    [ownerAccount, staking],
+                    [1234, -1234]
+                );
+            });
+
+            if (!stakingTokenIsRewardToken) {
+                it('owner can withdraw stakingToken up to non-staked amount', async () => {
+                    await adminStaking.setLogging(true);
+
+                    await expect(
+                        adminStaking.withdrawTokens(stakingToken.address, 1)
+                    ).to.be.revertedWith('Cannot withdraw staked tokens');
+
+                    await stakingToken.mint(adminStaking.address, 1000);
+                    await expect(
+                        adminStaking.withdrawTokens(stakingToken.address, 1001)
+                    ).to.be.revertedWith('Cannot withdraw staked tokens');
+
+                    await expect(
+                        () => adminStaking.withdrawTokens(stakingToken.address, 1000)
+                    ).to.changeTokenBalances(
+                        stakingToken,
+                        [ownerAccount, staking],
+                        [1000, -1000]
+                    );
+
+                    await expect(
+                        adminStaking.withdrawTokens(stakingToken.address, 1)
+                    ).to.be.revertedWith('Cannot withdraw staked tokens');
+                });
+            }
         });
     });
 }

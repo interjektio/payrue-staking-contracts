@@ -36,13 +36,13 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
 
         logState("BEFORE");
 
-        enforceGenericInvariants();
+        enforceGenericInvariants(true);
 
         _;
 
         logState("AFTER ");
 
-        enforceGenericInvariants();
+        enforceGenericInvariants(true);
 
         if (_stakingTokenIsRewardToken) {
             if (totalAmountStaked > totalAmountStakedBefore) {
@@ -58,7 +58,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             // this is cumbersome to check for invariants, so we just don't
         } else {
             // if staking token != reward token, staking token balance change
-            // will match new stakes
+            // will match new stakes (NOTE: not true for withdrawTokens)
             requireChangedBySameAmount(
                 stakingTokenBalanceBefore,
                 stakingToken.balanceOf(address(this)),
@@ -123,7 +123,9 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     }
 
     // Enforce invariants that don't require comparing before/after states
-    function enforceGenericInvariants()
+    function enforceGenericInvariants(
+        bool strictStakingBalanceCheck
+    )
     internal
     view
     {
@@ -131,6 +133,9 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         if (_stakingTokenIsRewardToken) {
             require(totalAmountStaked + totalLockedReward() <= stakingToken.balanceOf(address(this)));
         } else {
+            if (strictStakingBalanceCheck) {
+                require(totalAmountStaked == stakingToken.balanceOf(address(this)));
+            }
             require(totalAmountStaked <= stakingToken.balanceOf(address(this)));
             require(totalLockedReward() <= rewardToken.balanceOf(address(this)));
         }
@@ -291,5 +296,17 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     checkInvariants()
     {
         super.payRewardToUser(user);
+    }
+
+    function withdrawTokens(
+        address token,
+        uint256 amount
+    )
+    public
+    override
+    {
+        enforceGenericInvariants(false);
+        super.withdrawTokens(token, amount);
+        enforceGenericInvariants(false);
     }
 }

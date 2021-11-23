@@ -16,12 +16,13 @@ TODO:
 [x] Unstake is possible after 1 year has passed from the staking
 [x] On unstake, get back VPROPEL
 [x] Min stake amount 10k VPROPEL
-[ ] Withdraw non-locked tokens by admin
-[ ] Withdraw other tokens by admin
+[x] Withdraw non-locked tokens by admin
+[x] Withdraw other tokens by admin
 [ ] Emergency withdraw (by admin) ??
 [ ] Upgradeable ??
 [ ] Pause ??
 [ ] Force unstake user?
+[ ] README
 */
 
 // Features and assumptions:
@@ -122,7 +123,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         totalGuaranteedReward += amount;
         userData.storedRewardUpdatedOn = block.timestamp;  // may waste some gas, but would rather be safe than sorry
 
-
         emit Staked(
             msg.sender,
             amount
@@ -177,7 +177,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         }
     }
 
-
     function totalLockedReward()
     public
     view
@@ -223,6 +222,24 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         _rewardUser(user);
     }
 
+    function withdrawTokens(
+        address token,
+        uint256 amount
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        if (token == address(rewardToken)) {
+            require(amount <= availableToStakeOrReward(), "Can only withdraw up to balance minus locked amount");
+        } else if (token == address(stakingToken)) {
+            uint256 maxAmount = stakingToken.balanceOf(address(this)) - totalAmountStaked;
+            require(amount <= maxAmount, "Cannot withdraw staked tokens");
+        }
+        IERC20(token).transfer(msg.sender, amount);
+    }
+
     // INTERNAL API
     // ============
 
@@ -252,7 +269,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             reward
         );
     }
-
 
     function _unstakeUser(
         address user,
