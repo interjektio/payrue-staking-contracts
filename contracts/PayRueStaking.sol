@@ -67,6 +67,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
+    bool internal _stakingTokenIsRewardToken;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
@@ -80,9 +81,9 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     )
     Ownable()
     {
-        require(_stakingToken == _rewardToken); // TODO
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
+        _stakingTokenIsRewardToken = _stakingToken == _rewardToken;
     }
 
     // PUBLIC USER API
@@ -170,8 +171,10 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     view
     returns (uint256 stakeable)
     {
-        // TODO: if staking token and reward token are be different, don't subtract totalAmountStaked
-        stakeable = rewardToken.balanceOf(address(this)) - totalLockedReward() - totalAmountStaked;
+        stakeable = rewardToken.balanceOf(address(this)) - totalLockedReward();
+        if (_stakingTokenIsRewardToken) {
+            stakeable -= totalAmountStaked;
+        }
     }
 
 

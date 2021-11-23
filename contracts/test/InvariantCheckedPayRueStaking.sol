@@ -44,7 +44,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
 
         enforceGenericInvariants();
 
-        if (stakingTokenIsRewardToken()) {
+        if (_stakingTokenIsRewardToken) {
             if (totalAmountStaked > totalAmountStakedBefore) {
                 // new stake, new staked amount + new locked amount = staking token balance change * 2
                 requireChangedBySameAmount(
@@ -128,7 +128,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     view
     {
         // Someone can send stakingToken to the contract without staking, so the balance is not always just equal
-        if (stakingTokenIsRewardToken()) {
+        if (_stakingTokenIsRewardToken) {
             require(totalAmountStaked + totalLockedReward() <= stakingToken.balanceOf(address(this)));
         } else {
             require(totalAmountStaked <= stakingToken.balanceOf(address(this)));
@@ -228,15 +228,6 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         console.log("%s totalLockedReward:     %s", prefix, totalLockedReward());
         console.log("%s total staked+locked:   %s", prefix, totalAmountStaked + totalLockedReward());
     }
-    function stakingTokenIsRewardToken()
-    internal
-    pure
-    returns (bool)
-    {
-        // TODO: implement this later after we support different staking and reward tokens
-        return true;
-    }
-
 
     // Boilerplate to enable invariant checking for all functions
     // ==========================================================

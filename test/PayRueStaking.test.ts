@@ -1,7 +1,7 @@
 import {expect} from 'chai';
 import {beforeEach, describe, it} from 'mocha';
 import {ethers} from 'hardhat';
-import {BigNumber, BigNumberish, constants, Contract, Signer} from 'ethers';
+import {BigNumber, constants, Contract, Signer} from 'ethers';
 import {
     eth,
     getTokenBalanceChange,
