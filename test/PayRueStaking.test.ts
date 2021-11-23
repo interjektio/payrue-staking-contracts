@@ -9,16 +9,37 @@ import {
     timeTravel,
 } from './utils';
 
-const CONTRACTS = [
-    //'PayRueStaking',
-    'InvariantCheckedPayRueStaking'
+interface TestConfig {
+    contractName: string;
+    stakingTokenIsRewardToken: boolean;
+}
+const CONFIGS: TestConfig[] = [
+    {
+        contractName: 'InvariantCheckedPayRueStaking',
+        stakingTokenIsRewardToken: true,
+    },
+    {
+        contractName: 'InvariantCheckedPayRueStaking',
+        stakingTokenIsRewardToken: false,
+    },
 ];
 
-for (let contractName of CONTRACTS) {
-    describe(contractName, function() {
+for (let {
+    contractName,
+    stakingTokenIsRewardToken
+} of CONFIGS) {
+    let description = contractName;
+    if (stakingTokenIsRewardToken) {
+        description += ' (same token for staking + reward)'
+    } else {
+        description += ' (different tokens for staking + reward)'
+    }
+
+    describe(description, function() {
         let staking: Contract;
         let adminStaking: Contract;
-        let propelToken: Contract;
+        let stakingToken: Contract;
+        let rewardToken: Contract;
 
         let ownerAccount: Signer;
         let stakerAccount: Signer;
@@ -37,11 +58,17 @@ for (let contractName of CONTRACTS) {
             anotherAddress = await anotherAccount.getAddress();
 
             const TestToken = await ethers.getContractFactory('TestToken');
-            propelToken = await TestToken.deploy("Propel", "PROPEL");
+            stakingToken = await TestToken.deploy("Staking token", "STAKING");
+            if (stakingTokenIsRewardToken) {
+                rewardToken = stakingToken;
+            } else {
+                rewardToken = await TestToken.deploy("Reward token", "REWARD");
+            }
+
             const PayRueStaking = await ethers.getContractFactory(contractName);
             adminStaking = await PayRueStaking.deploy(
-                propelToken.address,
-                propelToken.address,
+                stakingToken.address,
+                rewardToken.address,
             );
             await adminStaking.deployed();
             staking = adminStaking.connect(stakerAccount);
@@ -66,12 +93,12 @@ for (let contractName of CONTRACTS) {
             if (typeof stakedAmount === 'string') {
                 stakedAmount = eth(stakedAmount);
             }
-            await propelToken.mint(ownerAddress, rewardAmount);
-            await propelToken.transfer(staking.address, rewardAmount);
+            await rewardToken.mint(ownerAddress, rewardAmount);
+            await rewardToken.transfer(staking.address, rewardAmount);
 
             if (!(stakerBalance as BigNumber).isZero()) {
-                await propelToken.mint(stakerAddress, stakerBalance);
-                await propelToken.connect(stakerAccount).approve(staking.address, constants.MaxUint256);
+                await stakingToken.mint(stakerAddress, stakerBalance);
+                await stakingToken.connect(stakerAccount).approve(staking.address, constants.MaxUint256);
             }
 
             if (stakedAmount && !(stakedAmount as BigNumber).isZero()) {
@@ -92,7 +119,7 @@ for (let contractName of CONTRACTS) {
             });
 
             it('cannot stake more than balance', async () => {
-                await propelToken.setBalance(stakerAddress, eth('30 000').sub(1));
+                await stakingToken.setBalance(stakerAddress, eth('30 000').sub(1));
                 await expect(
                     staking.stake(eth('30 000'))
                 ).to.be.revertedWith('ERC20: transfer amount exceeds balance');
@@ -106,7 +133,7 @@ for (let contractName of CONTRACTS) {
             });
 
             it('cannot stake less more than available reward amount', async () => {
-                await propelToken.mint(stakerAddress, eth('1 000 000 000').add(1));
+                await stakingToken.mint(stakerAddress, eth('1 000 000 000').add(1));
                 await expect(
                     staking.stake(eth('1 000 000 000').add(1))
                 ).to.be.revertedWith('Not enough rewards left to accept new stakes for given amount');
@@ -132,7 +159,7 @@ for (let contractName of CONTRACTS) {
                 await expect(
                     () => staking.stake(amount)
                 ).to.changeTokenBalances(
-                    propelToken,
+                    stakingToken,
                     [staking, stakerAccount],
                     [amount, amount.mul(-1)]
                 );
@@ -145,7 +172,7 @@ for (let contractName of CONTRACTS) {
                 await expect(
                     () => staking.stake(amount2)
                 ).to.changeTokenBalances(
-                    propelToken,
+                    stakingToken,
                     [staking, stakerAccount],
                     [amount2, amount2.mul(-1)]
                 );
@@ -156,8 +183,8 @@ for (let contractName of CONTRACTS) {
             });
 
             it('test multiple stakers', async () => {
-                await propelToken.setBalance(anotherAddress, eth('500 000'));
-                await propelToken.connect(anotherAccount).approve(staking.address, eth('500 000'));
+                await stakingToken.setBalance(anotherAddress, eth('500 000'));
+                await stakingToken.connect(anotherAccount).approve(staking.address, eth('500 000'));
 
                 const amount = eth('45 000');
                 await staking.stake(amount);
@@ -177,7 +204,7 @@ for (let contractName of CONTRACTS) {
                 await expect(
                     () => staking.claimReward()
                 ).to.changeTokenBalances(
-                    propelToken,
+                    rewardToken,
                     [stakerAccount, staking],
                     [0, 0]
                 );
@@ -219,7 +246,7 @@ for (let contractName of CONTRACTS) {
                 await expect(
                     () => tx = staking.claimReward(),
                 ).to.changeTokenBalances(
-                    propelToken,
+                    rewardToken,
                     [stakerAccount, staking],
                     [eth('20 000'), eth('-20 000')]
                 );
@@ -234,7 +261,7 @@ for (let contractName of CONTRACTS) {
                 await expect(
                     () => tx = staking.claimReward(),
                 ).to.changeTokenBalances(
-                    propelToken,
+                    rewardToken,
                     [stakerAccount, staking],
                     [eth('10 000'), eth('-10 000')]
                 );
@@ -249,24 +276,24 @@ for (let contractName of CONTRACTS) {
                 await timeTravel({ days: 400 }); // more than period
 
                 let tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('20 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('20 000'));
 
                 await timeTravel({ days: 182, hours: 12 });
 
                 tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('0'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('0'));
 
-                await propelToken.mint(staking.address, eth('10 000'));
+                await rewardToken.mint(staking.address, eth('10 000'));
 
                 tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('10 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('10 000'));
             });
 
             it('claim with multiple stakers', async () => {
-                await propelToken.mint(stakerAddress, eth('10 000'));
-                await propelToken.mint(anotherAddress, eth('15 000'));
-                await propelToken.connect(stakerAccount).approve(staking.address, eth('10 000'));
-                await propelToken.connect(anotherAccount).approve(staking.address, eth('15 000'));
+                await stakingToken.mint(stakerAddress, eth('10 000'));
+                await stakingToken.mint(anotherAddress, eth('15 000'));
+                await stakingToken.connect(stakerAccount).approve(staking.address, eth('10 000'));
+                await stakingToken.connect(anotherAccount).approve(staking.address, eth('15 000'));
 
                 await initTest({
                     rewardAmount: '25 000',
@@ -277,54 +304,54 @@ for (let contractName of CONTRACTS) {
                 const referenceBlock = await initTimetravelReferenceBlock();
 
                 let tx = await staking.stake(eth('10 000'));
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('-10 000'));
+                expect(await getTokenBalanceChange(tx, stakingToken, stakerAccount)).to.equal(eth('-10 000'));
 
                 await timeTravel({ days: 365 / 5, fromBlock: referenceBlock });
 
                 tx = await staking.connect(anotherAccount).stake(eth('15 000'));
-                expect(await getTokenBalanceChange(tx, propelToken, anotherAccount)).to.equal(eth('-15 000'));
+                expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('-15 000'));
 
                 await timeTravel({ days: 365 / 5 * 2, fromBlock: referenceBlock });
 
                 // staker1 can claim 40%, staker2 20%
                 // staker1: claim 40% of total
                 tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('4 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('4 000'));
 
                 // staker1 can claim 60%, staker2 40%
                 await timeTravel({ days: 365 / 5 * 3, fromBlock: referenceBlock });
 
                 // staker2: claim 40% of total
                 tx = await staking.connect(anotherAccount).claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, anotherAccount)).to.equal(eth('6 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, anotherAccount)).to.equal(eth('6 000'));
 
                 // both can claim 100% of funds left
                 await timeTravel({ days: 365 / 5 * 6, fromBlock: referenceBlock });
 
                 // staker2: claim 100% of rest (= 60% of total)
                 tx = await staking.connect(anotherAccount).claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, anotherAccount)).to.equal(eth('9 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, anotherAccount)).to.equal(eth('9 000'));
 
                 // staker1: claim 100% of rest (= 60% of total)
                 tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('6 000'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('6 000'));
 
                 // try to claim with both, nothing happens
                 tx = await staking.claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('0'));
+                expect(await getTokenBalanceChange(tx, rewardToken, stakerAccount)).to.equal(eth('0'));
 
                 tx = await staking.connect(anotherAccount).claimReward();
-                expect(await getTokenBalanceChange(tx, propelToken, anotherAccount)).to.equal(eth('0'));
+                expect(await getTokenBalanceChange(tx, rewardToken, anotherAccount)).to.equal(eth('0'));
 
                 await expect(
                     staking.unstake(eth('10 001'))
                 ).to.be.reverted;
 
                 tx = await staking.unstake(eth('10 000'));
-                expect(await getTokenBalanceChange(tx, propelToken, stakerAccount)).to.equal(eth('10 000'));
+                expect(await getTokenBalanceChange(tx, stakingToken, stakerAccount)).to.equal(eth('10 000'));
 
                 tx = await staking.connect(anotherAccount).exit();
-                expect(await getTokenBalanceChange(tx, propelToken, anotherAccount)).to.equal(eth('15 000'));
+                expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('15 000'));
             });
         });
     });
