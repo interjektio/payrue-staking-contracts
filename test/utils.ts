@@ -14,9 +14,13 @@ export interface TimeTravelOpts {
     minutes?: number;
     seconds?: number;
     mine?: boolean;
+    fromBlock?: string|number;
 }
 
 export async function timeTravel(opts: TimeTravelOpts) {
+    let {
+        fromBlock = 'latest'
+    } = opts;
     let seconds = opts.seconds ?? 0;
     if (opts.minutes) {
         seconds += opts.minutes * 60;
@@ -29,12 +33,18 @@ export async function timeTravel(opts: TimeTravelOpts) {
     }
 
     // evm_increaseTime is flaky since time passed in tests affects it.
-    const latestBlock = await ethers.provider.getBlock('latest');
-    await network.provider.send("evm_setNextBlockTimestamp", [latestBlock.timestamp + seconds]);
+    const referenceBlock = await ethers.provider.getBlock(fromBlock);
+    await network.provider.send("evm_setNextBlockTimestamp", [referenceBlock.timestamp + seconds]);
 
     if (opts.mine) {
         await network.provider.send("evm_mine");
     }
+}
+
+export async function initTimetravelReferenceBlock(): Promise<number> {
+    const latestBlock = await ethers.provider.getBlock('latest');
+    await network.provider.send("evm_setNextBlockTimestamp", [latestBlock.timestamp + 1]);
+    return latestBlock.number + 1;
 }
 
 export async function getTokenBalanceChange(

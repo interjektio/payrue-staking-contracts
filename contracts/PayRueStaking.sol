@@ -25,7 +25,7 @@ TODO:
 */
 
 // Features and assumptions:
-// - Users stake VPROPEL (stakingToken) and receive PROPEL (rewardToken)
+// - Users stake PROPEL and receive PROPEL
 // - APY is always 100% - you stake 10 000 VPROPEL, you get 10 000 PROPEL during the next year
 // - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
 //   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
@@ -63,12 +63,10 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     uint256 public constant lockedPeriod = 365 days;
     uint256 public constant yieldPeriod = 365 days;
     uint256 public constant dustAmount = 1 ether;  // Amount of PROPEL/VPROPEL considered insignificant
-    // TODO: make changeable
     uint256 public constant minStakeAmount = 10_000 ether; // should be at least 1
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
-    bool public stakingTokenIsRewardToken;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
@@ -82,9 +80,9 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     )
     Ownable()
     {
+        require(_stakingToken == _rewardToken); // TODO
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
-        stakingTokenIsRewardToken = stakingToken == rewardToken;
     }
 
     // PUBLIC USER API
@@ -172,10 +170,8 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     view
     returns (uint256 stakeable)
     {
-        stakeable = rewardToken.balanceOf(address(this)) - totalLockedReward();
-        if (stakingTokenIsRewardToken) {
-            stakeable -= totalAmountStaked;
-        }
+        // TODO: if staking token and reward token are be different, don't subtract totalAmountStaked
+        stakeable = rewardToken.balanceOf(address(this)) - totalLockedReward() - totalAmountStaked;
     }
 
 

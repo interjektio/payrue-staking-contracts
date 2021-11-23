@@ -9,6 +9,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     address[] public stakers;
     mapping(address => bool) public isStaker;
     uint256 public deployedOn;
+    bool public enableLogging;
 
     // Invariant checking API
     // ======================
@@ -33,24 +34,31 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         uint256 totalGuaranteedRewardBefore = totalGuaranteedReward;
         uint256 totalStoredRewardBefore = totalStoredReward;
 
-        //logState("BEFORE");
+        logState("BEFORE");
 
         enforceGenericInvariants();
 
         _;
 
-        //logState("AFTER");
+        logState("AFTER ");
 
         enforceGenericInvariants();
 
-        if (stakingTokenIsRewardToken) {
-            requireChangedBySameAmount(
-                stakingTokenBalanceBefore,
-                stakingToken.balanceOf(address(this)),
-                totalAmountStakedBefore + totalLockedRewardBefore,
-                totalAmountStaked + totalLockedReward()
-            );
+        if (stakingTokenIsRewardToken()) {
+            if (totalAmountStaked > totalAmountStakedBefore) {
+                // new stake, new staked amount + new locked amount = staking token balance change * 2
+                requireChangedBySameAmount(
+                    stakingTokenBalanceBefore * 2,
+                    stakingToken.balanceOf(address(this)) * 2,
+                    totalAmountStakedBefore + totalLockedRewardBefore,
+                    totalAmountStaked + totalLockedReward()
+                );
+            }
+            // else unstake or some operation that makes everything stay the same, e.g. claiming
+            // this is cumbersome to check for invariants, so we just don't
         } else {
+            // if staking token != reward token, staking token balance change
+            // will match new stakes
             requireChangedBySameAmount(
                 stakingTokenBalanceBefore,
                 stakingToken.balanceOf(address(this)),
@@ -70,8 +78,8 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             );
         }
 
-        if (totalGuaranteedReward >= totalGuaranteedRewardBefore) {
-            // if guaranteed reward increased (or stays the same), it means new stakes by the same amount
+        if (totalGuaranteedReward > totalGuaranteedRewardBefore) {
+            // if guaranteed reward increased, it means new stakes by the same amount
             requireChangedBySameAmount(
                 totalGuaranteedRewardBefore + totalStoredRewardBefore,
                 totalGuaranteedReward + totalStoredReward,
@@ -114,28 +122,13 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         }
     }
 
-    function logState(
-        string memory prefix
-    )
-    public
-    view
-    {
-        console.log(prefix);
-        console.log("stakingToken balance: %s", stakingToken.balanceOf(address(this)));
-        console.log("rewardToken balance: %s", rewardToken.balanceOf(address(this)));
-        console.log("totalAmountStaked: %s", totalAmountStaked);
-        console.log("totalGuaranteedReward: %s", totalGuaranteedReward);
-        console.log("totalStoredReward: %s", totalStoredReward);
-        console.log("totalLockedReward: %s", totalLockedReward());
-    }
-
     // Enforce invariants that don't require comparing before/after states
     function enforceGenericInvariants()
     internal
     view
     {
         // Someone can send stakingToken to the contract without staking, so the balance is not always just equal
-        if (stakingTokenIsRewardToken) {
+        if (stakingTokenIsRewardToken()) {
             require(totalAmountStaked + totalLockedReward() <= stakingToken.balanceOf(address(this)));
         } else {
             require(totalAmountStaked <= stakingToken.balanceOf(address(this)));
@@ -201,6 +194,47 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             require(bBefore < bAfter);
             require(aAfter - aBefore == bAfter - bBefore);
         }
+    }
+
+    // Test utilities
+    // ==============
+
+    function setLogging(
+        bool enabled
+    )
+    public
+    {
+        enableLogging = enabled;
+    }
+
+    function logState(
+        string memory prefix
+    )
+    public
+    view
+    {
+        if (!enableLogging) {
+            return;
+        }
+        console.log(prefix);
+        uint256 stakingTokenBalance = stakingToken.balanceOf(address(this));
+        uint256 rewardTokenBalance = rewardToken.balanceOf(address(this));
+        console.log("%s stakingToken balance:  %s", prefix, stakingTokenBalance);
+        console.log("%s rewardToken balance:   %s", prefix, rewardTokenBalance);
+        console.log("%s s+r token balance:     %s", prefix, stakingTokenBalance + rewardTokenBalance);
+        console.log("%s totalAmountStaked:     %s", prefix, totalAmountStaked);
+        console.log("%s totalGuaranteedReward: %s", prefix, totalGuaranteedReward);
+        console.log("%s totalStoredReward:     %s", prefix, totalStoredReward);
+        console.log("%s totalLockedReward:     %s", prefix, totalLockedReward());
+        console.log("%s total staked+locked:   %s", prefix, totalAmountStaked + totalLockedReward());
+    }
+    function stakingTokenIsRewardToken()
+    internal
+    pure
+    returns (bool)
+    {
+        // TODO: implement this later after we support different staking and reward tokens
+        return true;
     }
 
 
