@@ -9,7 +9,7 @@ import "hardhat/console.sol";
 
 /*
 TODO:
-[x] Stake VPROPEL, receive PROPEL
+[x] Stake PROPEL, receive PROPEL
 [x] Fixed staking duration (1 year, 365 days)
 [x] Fixed APY per duration (100% per year)
 [x] Max total staked amount which will either (do what?)
@@ -19,15 +19,14 @@ TODO:
 [x] Withdraw non-locked tokens by admin
 [x] Withdraw other tokens by admin
 [ ] Emergency withdraw (by admin) ??
-[ ] Upgradeable ??
 [ ] Pause ??
 [ ] Force unstake user?
 [ ] README
 */
 
 // Features and assumptions:
-// - Users stake PROPEL and receive PROPEL
-// - APY is always 100% - you stake 10 000 VPROPEL, you get 10 000 PROPEL during the next year
+// - Users stake PROPEL and also receive PROPEL
+// - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
 // - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
 //   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
 // - Each stake is locked for 365 days, after which it can be unstaked or left in the contract
