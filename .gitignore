@@ -1,6 +1,6 @@
 # Project files
 .env
-
+.idea
 # NodeJS
 node_modules
 
@@ -12,3 +12,5 @@ artifacts
 venv/
 __pycache__/
 .pytest-cache/
+
+deployments
