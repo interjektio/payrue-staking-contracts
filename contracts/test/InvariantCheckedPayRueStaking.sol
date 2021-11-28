@@ -112,13 +112,22 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         //}
 
         if (totalLockedReward() < totalLockedRewardBefore) {
-            // if total locked reward decreased, it means a reward was claimed
-            requireChangedBySameAmount(
-                rewardTokenBalanceBefore,
-                rewardToken.balanceOf(address(this)),
-                totalLockedRewardBefore,
-                totalLockedReward()
-            );
+            // if total locked reward decreased, it means a reward was claimed. maybe also an unstake
+            if (_stakingTokenIsRewardToken) {
+                requireChangedBySameAmount(
+                    rewardTokenBalanceBefore,
+                    rewardToken.balanceOf(address(this)),
+                    totalLockedRewardBefore + totalAmountStakedBefore,
+                    totalLockedReward() + totalAmountStaked
+                );
+            } else {
+                requireChangedBySameAmount(
+                    rewardTokenBalanceBefore,
+                    rewardToken.balanceOf(address(this)),
+                    totalLockedRewardBefore,
+                    totalLockedReward()
+                );
+            }
         }
     }
 
@@ -308,5 +317,24 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         enforceGenericInvariants(false);
         super.withdrawTokens(token, amount);
         enforceGenericInvariants(false);
+    }
+
+    function initiateEmergencyWithdrawal()
+    public
+    override
+    checkInvariants()
+    {
+        super.initiateEmergencyWithdrawal();
+    }
+
+    function forceExitUser(
+        address user
+    )
+    public
+    override
+    addStaker(user)
+    checkInvariants()
+    {
+        super.forceExitUser(user);
     }
 }

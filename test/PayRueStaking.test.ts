@@ -354,7 +354,14 @@ for (let {
                 tx = await staking.connect(anotherAccount).exit();
                 expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('15 000'));
             });
+
+            // TODO: test staking/withdrawing very small amounts + unstake, see if we can unstake and still leave
+            // guaranteed rewards
+            // TODO: test staking/withdrawing very small amounts after everything can be withdrawn
+            // TODO: test staking/withdrawing very small amounts (in general, maybe?)
         });
+
+        // TODO: test exit
 
         describe('withdrawTokens', () => {
             beforeEach(async () => {
@@ -424,8 +431,6 @@ for (let {
 
             if (!stakingTokenIsRewardToken) {
                 it('owner can withdraw stakingToken up to non-staked amount', async () => {
-                    await adminStaking.setLogging(true);
-
                     await expect(
                         adminStaking.withdrawTokens(stakingToken.address, 1)
                     ).to.be.revertedWith('Cannot withdraw staked tokens');
@@ -448,6 +453,97 @@ for (let {
                     ).to.be.revertedWith('Cannot withdraw staked tokens');
                 });
             }
+        });
+
+        describe('emergency withdrawal', () => {
+            beforeEach(async () => {
+                await initTest({
+                    rewardAmount: '30 000',
+                    stakerBalance: '20 000',
+                    stakedAmount: '10 000'
+                });
+            });
+
+            it('non-owners cannot initiate', async () => {
+                await expect(
+                    staking.initiateEmergencyWithdrawal()
+                ).to.be.revertedWith('Ownable: caller is not the owner');
+            });
+
+            it('owners can initiate', async () => {
+                await adminStaking.initiateEmergencyWithdrawal();
+                expect(await adminStaking.emergencyWithdrawalInProgress()).to.be.true;
+            });
+
+            it('emits correct event', async () => {
+                await expect(
+                    adminStaking.initiateEmergencyWithdrawal()
+                ).to.emit(adminStaking, 'EmergencyWithdrawalInitiated');
+            });
+
+            it('prevents new stakes', async () => {
+                await adminStaking.initiateEmergencyWithdrawal();
+                await expect(
+                    staking.stake(eth('10 000'))
+                ).to.be.revertedWith('Emergency withdrawal in progress, no new stakes accepted');
+            });
+
+            it('prevents new stakes', async () => {
+                await adminStaking.initiateEmergencyWithdrawal();
+                await expect(
+                    staking.stake(eth('10 000'))
+                ).to.be.revertedWith('Emergency withdrawal in progress, no new stakes accepted');
+            });
+
+            it('forcibly exiting users does not work without emergency withdrawal', async () => {
+                await expect(
+                    adminStaking.forceExitUser(stakerAddress)
+                ).to.be.revertedWith('Emergency withdrawal not in progress');
+            });
+
+            it('only owner can forcibly exit users', async () => {
+                await adminStaking.initiateEmergencyWithdrawal();
+                await expect(
+                    staking.forceExitUser(stakerAddress)
+                ).to.be.revertedWith('Ownable: caller is not the owner');
+            });
+
+            it('forcibly exiting users works when emergency withdrawal is in progress', async () => {
+                await adminStaking.initiateEmergencyWithdrawal();
+
+                let tx = await adminStaking.forceExitUser(stakerAddress);
+
+                if (stakingTokenIsRewardToken) {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('10 000').mul(2)); // stake + reward
+                } else {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('10 000'));
+                    expect(
+                        await getTokenBalanceChange(tx, rewardToken, stakerAddress)
+                    ).to.equal(eth('10 000'));
+                }
+
+                expect(await staking.totalAmountStaked()).to.equal(0);
+                expect(await staking.totalStoredReward()).to.equal(0);
+                expect(await staking.totalGuaranteedReward()).to.equal(0);
+                expect(await staking.totalLockedReward()).to.equal(0);
+
+                if (stakingTokenIsRewardToken) {
+                    const balance = await stakingToken.balanceOf(staking.address);
+                    tx = await adminStaking.withdrawTokens(stakingToken.address, balance);
+                    expect(await getTokenBalanceChange(tx, stakingToken, ownerAddress)).to.equal(balance);
+                } else {
+                    const stakingTokenBalance = await stakingToken.balanceOf(staking.address);
+                    const rewardTokenBalance = await rewardToken.balanceOf(staking.address);
+                    tx = await adminStaking.withdrawTokens(stakingToken.address, stakingTokenBalance);
+                    expect(await getTokenBalanceChange(tx, stakingToken, ownerAddress)).to.equal(stakingTokenBalance);
+                    tx = await adminStaking.withdrawTokens(rewardToken.address, rewardTokenBalance);
+                    expect(await getTokenBalanceChange(tx, rewardToken, ownerAddress)).to.equal(rewardTokenBalance);
+                }
+            });
         });
     });
 }

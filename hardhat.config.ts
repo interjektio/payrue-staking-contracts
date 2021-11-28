@@ -43,7 +43,9 @@ export default {
     ]
   },
   networks: {
-    hardhat: {},
+    hardhat: {
+      //allowUnlimitedContractSize: true,
+    },
     mainnet: {
       url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
       accounts: privateKeys,

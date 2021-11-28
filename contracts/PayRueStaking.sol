@@ -19,13 +19,14 @@ TODO:
 [x] Withdraw non-locked tokens by admin
 [x] Withdraw other tokens by admin
 [ ] Emergency withdraw (by admin) ??
-[ ] Pause ??
 [ ] Force unstake user?
+[ ] Change min stake amount?
+[ ] Pause ??
 [ ] README
 */
 
 // Features and assumptions:
-// - Users stake PROPEL and also receive PROPEL
+// - Users stake PROPEL and also receive PROPEL (though it also supports other tokens with 1:1 reward ratio)
 // - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
 // - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
 //   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
@@ -46,6 +47,8 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         uint256 amount
     );
 
+    event EmergencyWithdrawalInitiated();
+
     struct Stake {
         uint256 amount;
         uint256 timestamp;
@@ -62,7 +65,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     uint256 public constant lockedPeriod = 365 days;
     uint256 public constant yieldPeriod = 365 days;
-    uint256 public constant dustAmount = 1 ether;  // Amount of PROPEL/VPROPEL considered insignificant
+    uint256 public constant dustAmount = 1 ether;  // Amount of staked/reward token considered insignificant
     uint256 public constant minStakeAmount = 10_000 ether; // should be at least 1
 
     IERC20 public stakingToken;
@@ -74,6 +77,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     uint256 public totalAmountStaked = 0;
     uint256 public totalGuaranteedReward = 0;
     uint256 public totalStoredReward = 0;
+    bool public emergencyWithdrawalInProgress = false;
 
     constructor(
         address _stakingToken,
@@ -96,6 +100,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     virtual
     nonReentrant
     {
+        require(!emergencyWithdrawalInProgress, "Emergency withdrawal in progress, no new stakes accepted");
         require(amount >= minStakeAmount, "Minimum stake amount not met");
         // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
         require(
@@ -237,6 +242,53 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             require(amount <= maxAmount, "Cannot withdraw staked tokens");
         }
         IERC20(token).transfer(msg.sender, amount);
+    }
+
+    function initiateEmergencyWithdrawal()
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        require(!emergencyWithdrawalInProgress, "Emergency withdrawal already in progress");
+        emergencyWithdrawalInProgress = true;
+        emit EmergencyWithdrawalInitiated();
+    }
+
+    function forceExitUser(
+        address user
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        // NOTE: this pays all of guaranteed reward to the user, even ahead of schedule with humongous APY!
+        require(emergencyWithdrawalInProgress, "Emergency withdrawal not in progress");
+        UserStakingData storage userData = stakingDataByUser[user];
+        if (userData.amountStaked > 0) {
+            totalAmountStaked -= userData.amountStaked;
+            stakingToken.transfer(user, userData.amountStaked);
+            emit Unstaked(
+                user,
+                userData.amountStaked
+            );
+            //userData.amountStaked = 0;
+        }
+        uint256 userReward = userData.storedReward + userData.guaranteedReward;
+        if (userReward > 0) {
+            rewardToken.transfer(user, userReward);
+            totalStoredReward -= userData.storedReward;
+            totalGuaranteedReward -= userData.guaranteedReward;
+            emit RewardPaid(
+                user,
+                userReward
+            );
+            //userData.storedReward = 0;
+            //userData.guaranteedReward = 0;
+        }
+        // delete the whole thing to set everything as 0 and to save on gas
+        delete stakingDataByUser[user];
     }
 
     // INTERNAL API
