@@ -341,7 +341,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             }
 
             require(
-                userData.stakes[i].timestamp < block.timestamp - lockedPeriod,
+                userData.stakes[i].timestamp <= block.timestamp - lockedPeriod,
                 "Unstaking is only allowed after the locked period has expired"
             );
             if (userData.stakes[i].amount > amountLeft) {

@@ -15,6 +15,14 @@ interface TestConfig {
 }
 const CONFIGS: TestConfig[] = [
     {
+        contractName: 'PayRueStaking',
+        stakingTokenIsRewardToken: true,
+    },
+    {
+        contractName: 'PayRueStaking',
+        stakingTokenIsRewardToken: false,
+    },
+    {
         contractName: 'InvariantCheckedPayRueStaking',
         stakingTokenIsRewardToken: true,
     },
@@ -361,7 +369,73 @@ for (let {
             // TODO: test staking/withdrawing very small amounts (in general, maybe?)
         });
 
-        // TODO: test exit
+        describe('exit', () => {
+            let referenceBlock: number;
+
+            beforeEach(async () => {
+                await initTest({
+                    rewardAmount: '30 000',
+                    stakerBalance: '20 000',
+                });
+
+                referenceBlock = await initTimetravelReferenceBlock();
+                await staking.stake(eth('10 000'));
+            });
+
+            it('does not work before locked period has passed', async () => {
+                await timeTravel({
+                    days: 364,
+                    hours: 23,
+                    minutes: 59,
+                    seconds: 59,
+                    fromBlock: referenceBlock
+                });
+               await expect(
+                   staking.exit()
+               ).to.be.revertedWith('Unstaking is only allowed after the locked period has expired')
+            });
+
+            it('works after locked period has passed', async () => {
+                await timeTravel({ days: 365, fromBlock: referenceBlock });
+                let tx = await staking.exit();
+                if (stakingTokenIsRewardToken) {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('20 000'));
+                } else {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('10 000'));
+                    expect(
+                        await getTokenBalanceChange(tx, rewardToken, stakerAddress)
+                    ).to.equal(eth('10 000'));
+                }
+                expect(await staking.totalAmountStaked()).to.equal(0);
+                expect(await staking.availableToStakeOrReward()).to.equal(eth('20 000'));
+            });
+
+            it('works after more than locked period has passed', async () => {
+                await timeTravel({ days: 365/5*6, fromBlock: referenceBlock });
+
+                const tx = await staking.exit();
+
+                if (stakingTokenIsRewardToken) {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('22 000'));
+                } else {
+                    expect(
+                        await getTokenBalanceChange(tx, stakingToken, stakerAddress)
+                    ).to.equal(eth('10 000'));
+                    expect(
+                        await getTokenBalanceChange(tx, rewardToken, stakerAddress)
+                    ).to.equal(eth('12 000'));
+                }
+
+                expect(await staking.totalAmountStaked()).to.equal(0);
+                expect(await staking.availableToStakeOrReward()).to.equal(eth('18 000'));
+            });
+        });
 
         describe('withdrawTokens', () => {
             beforeEach(async () => {

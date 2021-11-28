@@ -88,46 +88,13 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             );
         }
 
-        //if (totalGuaranteedReward < totalGuaranteedRewardBefore) {
-        //    // if guaranteed reward decreased, stored reward must increase at least as much
-        //    // TODO: seems not to be the case
-        //    requireChangedBySameAmount(
-        //        totalGuaranteedRewardBefore,
-        //        totalGuaranteedReward,
-        //        // these are flipped because it's an increase for a decrease
-        //        totalStoredReward,
-        //        totalStoredRewardBefore
-        //    );
-        //}
-
-        //if (totalLockedReward() > totalLockedRewardBefore) {
-        //    // reward locked increased => there must have been new stakes
-        //    // TODO: NOPE! it might also mean that the staking period has been passed without claims
-        //    requireChangedBySameAmount(
-        //        totalAmountStakedBefore,
-        //        totalAmountStaked,
-        //        totalLockedRewardBefore,
-        //        totalLockedReward()
-        //    );
-        //}
-
         if (totalLockedReward() < totalLockedRewardBefore) {
             // if total locked reward decreased, it means a reward was claimed. maybe also an unstake
-            if (_stakingTokenIsRewardToken) {
-                requireChangedBySameAmount(
-                    rewardTokenBalanceBefore,
-                    rewardToken.balanceOf(address(this)),
-                    totalLockedRewardBefore + totalAmountStakedBefore,
-                    totalLockedReward() + totalAmountStaked
-                );
-            } else {
-                requireChangedBySameAmount(
-                    rewardTokenBalanceBefore,
-                    rewardToken.balanceOf(address(this)),
-                    totalLockedRewardBefore,
-                    totalLockedReward()
-                );
-            }
+            // note that we cannot really assert that rewards were claimed by the exact amount, because
+            // it's also possible that non-locked rewards were claimed
+            uint256 lockedRewardDifference = totalLockedRewardBefore - totalLockedReward();
+            uint256 rewardTokenBalanceDifference = rewardTokenBalanceBefore - rewardToken.balanceOf(address(this));
+            require(rewardTokenBalanceDifference >= lockedRewardDifference);
         }
     }
 

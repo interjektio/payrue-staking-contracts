@@ -27,13 +27,14 @@ task("accounts", "Prints the list of accounts", async (args, hre) => {
 });
 
 const privateKeys = DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [];
+const disableOptimizer = ['1', 'true'].indexOf((process.env.DISABLE_OPTIMIZER ?? '').toLowerCase()) !== -1;
 
 export default {
   solidity: {
     compilers: [
       {
         version: "0.8.4",
-        settings: {
+        settings: disableOptimizer ? {} : {
           optimizer: {
             enabled: true,
             runs: 1000,
@@ -44,7 +45,7 @@ export default {
   },
   networks: {
     hardhat: {
-      //allowUnlimitedContractSize: true,
+      allowUnlimitedContractSize: disableOptimizer,
     },
     mainnet: {
       url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
