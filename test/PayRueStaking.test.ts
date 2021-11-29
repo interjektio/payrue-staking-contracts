@@ -626,6 +626,12 @@ for (let {
                 await adminStaking.setMinStakeAmount(123);
                 expect(await adminStaking.minStakeAmount()).to.equal(123);
             });
+
+            it('minStakeAmount cannot be set to 0', async () => {
+                await expect(
+                    adminStaking.setMinStakeAmount(0)
+                ).to.be.revertedWith('Minimum stake amount must be at least 1');
+            });
         });
 
         describe('VERY SLOW tests', () => {

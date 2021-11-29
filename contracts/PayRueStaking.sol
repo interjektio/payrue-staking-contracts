@@ -251,6 +251,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     onlyOwner
     nonReentrant
     {
+        require(newMinStakeAmount > 1, "Minimum stake amount must be at least 1");
         minStakeAmount = newMinStakeAmount;
     }
 
