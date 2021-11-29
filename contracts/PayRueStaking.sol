@@ -5,8 +5,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import "hardhat/console.sol";
-
 /*
 TODO:
 [x] Stake PROPEL, receive PROPEL
@@ -18,9 +16,9 @@ TODO:
 [x] Min stake amount 10k VPROPEL
 [x] Withdraw non-locked tokens by admin
 [x] Withdraw other tokens by admin
-[ ] Emergency withdraw (by admin) ??
-[ ] Force unstake user?
-[ ] Change min stake amount?
+[x] Emergency withdraw (by admin) ??
+[x] Force unstake user?
+[x] Change min stake amount?
 [ ] Pause ??
 [ ] README
 */
@@ -65,19 +63,19 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     uint256 public constant lockedPeriod = 365 days;
     uint256 public constant yieldPeriod = 365 days;
-    uint256 public constant dustAmount = 1 ether;  // Amount of staked/reward token considered insignificant
-    uint256 public constant minStakeAmount = 10_000 ether; // should be at least 1
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
     bool internal _stakingTokenIsRewardToken;
+
+    uint256 public minStakeAmount = 10_000 ether; // should be at least 1
+    bool public emergencyWithdrawalInProgress = false;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
     uint256 public totalAmountStaked = 0;
     uint256 public totalGuaranteedReward = 0;
     uint256 public totalStoredReward = 0;
-    bool public emergencyWithdrawalInProgress = false;
 
     constructor(
         address _stakingToken,
@@ -164,6 +162,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         require(userData.storedReward == 0, "Invariant for storedReward failed");
         require(userData.amountStaked == 0, "Invariant for amountStaked failed");
         require(userData.guaranteedReward == 0, "Invariant for guaranteedReward failed");
+        require(userData.guaranteedReward == 0, "Invariant for storedReward failed");
         delete stakingDataByUser[msg.sender];
     }
 
@@ -242,6 +241,17 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             require(amount <= maxAmount, "Cannot withdraw staked tokens");
         }
         IERC20(token).transfer(msg.sender, amount);
+    }
+
+    function setMinStakeAmount(
+        uint256 newMinStakeAmount
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        minStakeAmount = newMinStakeAmount;
     }
 
     function initiateEmergencyWithdrawal()
@@ -365,15 +375,15 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         userData.amountStaked -= amount;
         totalAmountStaked -= amount;
 
-        // If the user has a very low staked amount or guaranteed reward left, just pay all reward.
-        // This is probably necessary since we might get small rounding errors when handling rewards,
-        // and we might even end up in a state where the user has guaranteed reward and 0 staked amount, which would
-        // mean that the guaranteed reward can never be cleared.
-        if (
-            userData.guaranteedReward > 0 && (userData.amountStaked <= dustAmount || userData.guaranteedReward <= dustAmount)
-        ) {
+        // We need to make sure the user is left with no guaranteed reward if they have unstaked everything
+        // -- in that case, just add to stored reward.
+        if (userData.guaranteedReward > 0 && i == userData.stakes.length) {
             userData.storedReward += userData.guaranteedReward;
+            totalStoredReward += userData.guaranteedReward;
+
+            totalGuaranteedReward -= userData.guaranteedReward;
             userData.guaranteedReward = 0;
+
             userData.storedRewardUpdatedOn = block.timestamp;
         }
 

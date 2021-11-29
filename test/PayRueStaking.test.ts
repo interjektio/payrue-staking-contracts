@@ -362,11 +362,6 @@ for (let {
                 tx = await staking.connect(anotherAccount).exit();
                 expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('15 000'));
             });
-
-            // TODO: test staking/withdrawing very small amounts + unstake, see if we can unstake and still leave
-            // guaranteed rewards
-            // TODO: test staking/withdrawing very small amounts after everything can be withdrawn
-            // TODO: test staking/withdrawing very small amounts (in general, maybe?)
         });
 
         describe('exit', () => {
@@ -617,6 +612,82 @@ for (let {
                     tx = await adminStaking.withdrawTokens(rewardToken.address, rewardTokenBalance);
                     expect(await getTokenBalanceChange(tx, rewardToken, ownerAddress)).to.equal(rewardTokenBalance);
                 }
+            });
+        });
+
+        describe('setMinStakeAmount', () => {
+            it('non-owners cannot change minStakeAmount', async () => {
+                await expect(
+                    staking.setMinStakeAmount(123)
+                ).to.be.revertedWith('Ownable: caller is not the owner');
+            });
+
+            it('owners can change minStakeAmount', async () => {
+                await adminStaking.setMinStakeAmount(123);
+                expect(await adminStaking.minStakeAmount()).to.equal(123);
+            });
+        });
+
+        describe('VERY SLOW tests', () => {
+            it('test claiming very small amounts and then unstaking (rounding errors)', async () => {
+                // The reward per second is 50 000 000 / 365*24*60*60 = 1.5854895991882294,
+                // which gets rounded down by solidity to 1 with a significant (58,5%) rounding error
+                // Note that this amount is in wei, not ether / 10^18 units
+                const minStakeAmount = BigNumber.from(50_000_000);
+                await adminStaking.setMinStakeAmount(minStakeAmount);
+                const totalAmountStaked = minStakeAmount;
+
+                await initTest({
+                    rewardAmount: totalAmountStaked,
+                    stakerBalance: totalAmountStaked,
+                });
+
+                const referenceBlock = await initTimetravelReferenceBlock();
+                await staking.stake(totalAmountStaked);
+                expect(await rewardToken.balanceOf(stakerAddress)).to.equal(0);
+
+                const iterations = 250;
+                for(let i = 1; i <= iterations; i++) {
+                    await timeTravel({ seconds: i, fromBlock: referenceBlock });
+                    const tx = await staking.claimReward();
+                    // >>> (20_000 * 10**18) / (365 * 24 * 60 * 60)
+                    // 634195839675291.8
+                    // Which will get truncated to 634195839675291 by bignumber arithmetic
+                    // So this causes a small but compounding rounding error
+                    const balanceChange = await getTokenBalanceChange(tx, rewardToken, stakerAddress);
+                    expect(
+                        balanceChange
+                    ).to.equal(minStakeAmount.div(365 * 24 * 60 * 60));
+                    // next line is sanity check, can be skipped
+                    expect(balanceChange).to.equal(1);
+                }
+
+                // more sanity checks, total change is close to, but LESS THAN the actual change
+                const expectedTotalChange = minStakeAmount.div(365 * 24 * 60 * 60 / iterations)
+                const rewardTokenBalance = await rewardToken.balanceOf(stakerAddress);
+                expect(
+                    rewardTokenBalance
+                ).to.be.closeTo(expectedTotalChange, 150);
+                expect(
+                    rewardTokenBalance.lt(expectedTotalChange)
+                ).to.be.true;
+
+                await timeTravel({ days: 365, fromBlock: referenceBlock });
+                await staking.unstake(totalAmountStaked);
+                await staking.claimReward();
+
+                if (stakingTokenIsRewardToken) {
+                    expect(
+                        await rewardToken.balanceOf(stakerAddress)
+                    ).to.equal(totalAmountStaked.mul(2));
+                } else {
+                    expect(
+                        await rewardToken.balanceOf(stakerAddress)
+                    ).to.equal(totalAmountStaked);
+                }
+                expect(await staking.totalAmountStaked()).to.equal(0);
+                expect(await staking.totalGuaranteedReward()).to.equal(0);
+                expect(await staking.totalLockedReward()).to.equal(0);
             });
         });
     });
