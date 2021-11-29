@@ -56,6 +56,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     uint256 public minStakeAmount = 10_000 ether; // should be at least 1
     bool public emergencyWithdrawalInProgress = false;
+    bool public paused = false;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
@@ -84,6 +85,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     virtual
     nonReentrant
     {
+        require(!paused, "Staking is temporarily paused, no new stakes accepted");
         require(!emergencyWithdrawalInProgress, "Emergency withdrawal in progress, no new stakes accepted");
         require(amount >= minStakeAmount, "Minimum stake amount not met");
         // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
@@ -235,6 +237,17 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     {
         require(newMinStakeAmount > 1, "Minimum stake amount must be at least 1");
         minStakeAmount = newMinStakeAmount;
+    }
+
+    function setPaused(
+        bool newPaused
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        paused = newPaused;
     }
 
     function initiateEmergencyWithdrawal()

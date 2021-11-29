@@ -615,6 +615,36 @@ for (let {
             });
         });
 
+        describe('pause', () => {
+            it('non-owners cannot set paused', async () => {
+                await expect(
+                    staking.setPaused(true)
+                ).to.be.revertedWith('Ownable: caller is not the owner');
+            });
+
+            it('owners can set paused', async () => {
+                await adminStaking.setPaused(true);
+                expect(await adminStaking.paused()).to.be.true;
+                await adminStaking.setPaused(false);
+                expect(await adminStaking.paused()).to.be.false;
+            });
+
+            it('pause prevents new stakes', async () => {
+                await initTest({
+                    rewardAmount: '30 000',
+                    stakerBalance: '20 000',
+                    stakedAmount: '10 000'
+                });
+                await adminStaking.setPaused(true);
+                await expect(
+                    staking.stake(eth('10 000'))
+                ).to.be.revertedWith('Staking is temporarily paused, no new stakes accepted');
+
+                await adminStaking.setPaused(false);
+                await staking.stake(eth('10 000'))
+            });
+        });
+
         describe('setMinStakeAmount', () => {
             it('non-owners cannot change minStakeAmount', async () => {
                 await expect(
