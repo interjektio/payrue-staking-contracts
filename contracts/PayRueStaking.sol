@@ -1,34 +1,20 @@
 // SPDX-License-Identifier: MIT
+/**
+* The PayRue Staking Contract
+*
+* Features and assumptions:
+* - Users stake PROPEL and also receive PROPEL (though it also supports other tokens with 1:1 reward ratio)
+* - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
+* - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
+*   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
+* - Each stake is locked for 365 days, after which it can be unstaked or left in the contract
+*/
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/*
-TODO:
-[x] Stake PROPEL, receive PROPEL
-[x] Fixed staking duration (1 year, 365 days)
-[x] Fixed APY per duration (100% per year)
-[x] Max total staked amount which will either (do what?)
-[x] Unstake is possible after 1 year has passed from the staking
-[x] On unstake, get back VPROPEL
-[x] Min stake amount 10k VPROPEL
-[x] Withdraw non-locked tokens by admin
-[x] Withdraw other tokens by admin
-[x] Emergency withdraw (by admin) ??
-[x] Force unstake user?
-[x] Change min stake amount?
-[ ] Pause ??
-[ ] README
-*/
-
-// Features and assumptions:
-// - Users stake PROPEL and also receive PROPEL (though it also supports other tokens with 1:1 reward ratio)
-// - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
-// - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
-//   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
-// - Each stake is locked for 365 days, after which it can be unstaked or left in the contract
 contract PayRueStaking is ReentrancyGuard, Ownable {
     event Staked(
         address indexed user,
@@ -159,10 +145,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             _unstakeUser(msg.sender, userData.amountStaked);
         }
         _rewardUser(msg.sender);
-        require(userData.storedReward == 0, "Invariant for storedReward failed");
-        require(userData.amountStaked == 0, "Invariant for amountStaked failed");
-        require(userData.guaranteedReward == 0, "Invariant for guaranteedReward failed");
-        require(userData.guaranteedReward == 0, "Invariant for storedReward failed");
         delete stakingDataByUser[msg.sender];
     }
 
