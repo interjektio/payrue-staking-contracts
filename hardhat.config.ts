@@ -10,58 +10,58 @@ const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || '';
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || '';
 
 if (!INFURA_API_KEY) {
-  console.warn('INFURA_API_KEY missing, Ethereum networks not working');
+    console.warn('INFURA_API_KEY missing, Ethereum networks not working');
 }
 if (!DEPLOYER_PRIVATE_KEY) {
-  console.warn('DEPLOYER_PRIVATE_KEY missing, deployment not working');
+    console.warn('DEPLOYER_PRIVATE_KEY missing, deployment not working');
 }
 
 // This is a sample Hardhat task. To learn how to create your own go to
 // https://hardhat.org/guides/create-task.html
 task("accounts", "Prints the list of accounts", async (args, hre) => {
-  const accounts = await hre.ethers.getSigners();
+    const accounts = await hre.ethers.getSigners();
 
-  for (const account of accounts) {
-    console.log(account.address);
-  }
+    for (const account of accounts) {
+        console.log(account.address);
+    }
 });
 
 const privateKeys = DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [];
 const disableOptimizer = ['1', 'true'].indexOf((process.env.DISABLE_OPTIMIZER ?? '').toLowerCase()) !== -1;
 
 export default {
-  solidity: {
-    compilers: [
-      {
-        version: "0.8.4",
-        settings: disableOptimizer ? {} : {
-          optimizer: {
-            enabled: true,
-            runs: 1000,
-          },
+    solidity: {
+        compilers: [
+            {
+                version: "0.8.4",
+                settings: disableOptimizer ? {} : {
+                    optimizer: {
+                        enabled: true,
+                        runs: 1000,
+                    },
+                },
+            },
+        ]
+    },
+    networks: {
+        hardhat: {
+            allowUnlimitedContractSize: disableOptimizer,
         },
-      },
-    ]
-  },
-  networks: {
-    hardhat: {
-      allowUnlimitedContractSize: disableOptimizer,
+        mainnet: {
+            url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
+            accounts: privateKeys,
+        },
+        rinkeby: {
+            url: `https://rinkeby.infura.io/v3/${INFURA_API_KEY}`,
+            accounts: privateKeys,
+        },
     },
-    mainnet: {
-      url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
-      accounts: privateKeys,
+    namedAccounts: {
+        deployer: {
+            default: 0
+        },
     },
-    rinkeby: {
-      url: `https://rinkeby.infura.io/v3/${INFURA_API_KEY}`,
-      accounts: privateKeys,
-    },
-  },
-  namedAccounts: {
-    deployer: {
-      default: 0
-    },
-  },
-  etherscan: {
-    apiKey: ETHERSCAN_API_KEY,
-  }
+    etherscan: {
+        apiKey: ETHERSCAN_API_KEY,
+    }
 };
