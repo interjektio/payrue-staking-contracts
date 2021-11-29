@@ -695,6 +695,63 @@ for (let {
                 expect(await staking.totalGuaranteedReward()).to.equal(0);
                 expect(await staking.totalLockedReward()).to.equal(0);
             });
+
+            it('test claiming very small amounts that result in zero rewards (rounding errors)', async () => {
+                // The reward per second is 0.1 (3 153 600 / 365*24*60*60)
+                // which gets rounded down by solidity to 0.
+                // This should be accounted for, so that claiming only every second returns in a reward of 1
+                // every 10 times.
+                // Note that this amount is in wei, not ether
+                const minStakeAmount = BigNumber.from(3_153_600);
+                await adminStaking.setMinStakeAmount(minStakeAmount);
+                const totalAmountStaked = minStakeAmount;
+
+                await initTest({
+                    rewardAmount: totalAmountStaked,
+                    stakerBalance: totalAmountStaked,
+                });
+
+                const referenceBlock = await initTimetravelReferenceBlock();
+                await staking.stake(totalAmountStaked);
+                expect(await rewardToken.balanceOf(stakerAddress)).to.equal(0);
+
+                const iterations = 50;
+                for(let i = 1; i <= iterations; i++) {
+                    await timeTravel({ seconds: i, fromBlock: referenceBlock });
+                    const tx = await staking.claimReward();
+                    // >>> (20_000 * 10**18) / (365 * 24 * 60 * 60)
+                    // 634195839675291.8
+                    // Which will get truncated to 634195839675291 by bignumber arithmetic
+                    // So this causes a small but compounding rounding error
+                    const balanceChange = await getTokenBalanceChange(tx, rewardToken, stakerAddress);
+                    if (i % 10 == 0) {
+                        expect(balanceChange).to.equal(1);
+                    } else {
+                        expect(balanceChange).to.equal(0);
+                    }
+                }
+
+                expect(
+                    await rewardToken.balanceOf(stakerAddress)
+                ).to.be.equal(5);
+
+                await timeTravel({ days: 365, fromBlock: referenceBlock });
+                const tx = await staking.claimReward();
+                expect(
+                    await getTokenBalanceChange(tx, rewardToken, stakerAccount)
+                ).to.equal(totalAmountStaked.sub(iterations / 10));
+                expect(
+                    await rewardToken.balanceOf(stakerAddress)
+                ).to.equal(totalAmountStaked);
+                expect(await staking.totalGuaranteedReward()).to.equal(0);
+                expect(await staking.totalLockedReward()).to.equal(0);
+
+                await staking.unstake(totalAmountStaked);
+
+                expect(await staking.totalAmountStaked()).to.equal(0);
+                expect(await staking.totalGuaranteedReward()).to.equal(0);
+                expect(await staking.totalLockedReward()).to.equal(0);
+            });
         });
     });
 }
