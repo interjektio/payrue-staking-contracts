@@ -1,17 +1,14 @@
 import "@nomiclabs/hardhat-waffle";
 import "hardhat-deploy";
+import "@tenderly/hardhat-tenderly";
 import dotenv from "dotenv";
 import {task} from "hardhat/config";
 
 dotenv.config();
 
-const INFURA_API_KEY = process.env.INFURA_API_KEY || '';
 const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || '';
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || '';
 
-if (!INFURA_API_KEY) {
-    console.warn('INFURA_API_KEY missing, Ethereum networks not working');
-}
 if (!DEPLOYER_PRIVATE_KEY) {
     console.warn('DEPLOYER_PRIVATE_KEY missing, deployment not working');
 }
@@ -47,12 +44,16 @@ export default {
         hardhat: {
             allowUnlimitedContractSize: disableOptimizer,
         },
-        mainnet: {
-            url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
+        bsc: {
+            url: 'https://bsc-dataseed.binance.org/',
+            chainId: 56,
+            gasPrice: 10_000_000_000, // 10 GWei
             accounts: privateKeys,
         },
-        rinkeby: {
-            url: `https://rinkeby.infura.io/v3/${INFURA_API_KEY}`,
+        "bsc-testnet": {
+            url: 'https://data-seed-prebsc-2-s2.binance.org:8545/',
+            chainId: 97,
+            gasPrice: 10_000_000_000, // 10 GWei
             accounts: privateKeys,
         },
     },
