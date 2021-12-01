@@ -1,35 +1,20 @@
 // SPDX-License-Identifier: MIT
+/**
+* The PayRue Staking Contract
+*
+* Features and assumptions:
+* - Users stake PROPEL and also receive PROPEL (though it also supports other tokens with 1:1 reward ratio)
+* - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
+* - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
+*   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
+* - Each stake is locked for 365 days, after which it can be unstaked or left in the contract
+*/
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import "hardhat/console.sol";
-
-/*
-TODO:
-[x] Stake PROPEL, receive PROPEL
-[x] Fixed staking duration (1 year, 365 days)
-[x] Fixed APY per duration (100% per year)
-[x] Max total staked amount which will either (do what?)
-[x] Unstake is possible after 1 year has passed from the staking
-[x] On unstake, get back VPROPEL
-[x] Min stake amount 10k VPROPEL
-[x] Withdraw non-locked tokens by admin
-[x] Withdraw other tokens by admin
-[ ] Emergency withdraw (by admin) ??
-[ ] Pause ??
-[ ] Force unstake user?
-[ ] README
-*/
-
-// Features and assumptions:
-// - Users stake PROPEL and also receive PROPEL
-// - APY is always 100% - you stake 10 000 PROPEL, you get 10 000 PROPEL as rewards during the next year
-// - Each stake is guaranteed the 100% reward in 365 days, after which they can still get new rewards if
-//   there is reward money left in the contract. If the reward cannot be guaranteed, the stake will not be accepted.
-// - Each stake is locked for 365 days, after which it can be unstaked or left in the contract
 contract PayRueStaking is ReentrancyGuard, Ownable {
     event Staked(
         address indexed user,
@@ -45,6 +30,8 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         address indexed user,
         uint256 amount
     );
+
+    event EmergencyWithdrawalInitiated();
 
     struct Stake {
         uint256 amount;
@@ -62,12 +49,14 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     uint256 public constant lockedPeriod = 365 days;
     uint256 public constant yieldPeriod = 365 days;
-    uint256 public constant dustAmount = 1 ether;  // Amount of PROPEL/VPROPEL considered insignificant
-    uint256 public constant minStakeAmount = 10_000 ether; // should be at least 1
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
     bool internal _stakingTokenIsRewardToken;
+
+    uint256 public minStakeAmount = 10_000 ether; // should be at least 1
+    bool public emergencyWithdrawalInProgress = false;
+    bool public paused = false;
 
     mapping(address => UserStakingData) stakingDataByUser;
 
@@ -96,6 +85,8 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     virtual
     nonReentrant
     {
+        require(!paused, "Staking is temporarily paused, no new stakes accepted");
+        require(!emergencyWithdrawalInProgress, "Emergency withdrawal in progress, no new stakes accepted");
         require(amount >= minStakeAmount, "Minimum stake amount not met");
         // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
         require(
@@ -156,9 +147,6 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             _unstakeUser(msg.sender, userData.amountStaked);
         }
         _rewardUser(msg.sender);
-        require(userData.storedReward == 0, "Invariant for storedReward failed");
-        require(userData.amountStaked == 0, "Invariant for amountStaked failed");
-        require(userData.guaranteedReward == 0, "Invariant for guaranteedReward failed");
         delete stakingDataByUser[msg.sender];
     }
 
@@ -239,6 +227,76 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         IERC20(token).transfer(msg.sender, amount);
     }
 
+    function setMinStakeAmount(
+        uint256 newMinStakeAmount
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        require(newMinStakeAmount > 1, "Minimum stake amount must be at least 1");
+        minStakeAmount = newMinStakeAmount;
+    }
+
+    function setPaused(
+        bool newPaused
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        paused = newPaused;
+    }
+
+    function initiateEmergencyWithdrawal()
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        require(!emergencyWithdrawalInProgress, "Emergency withdrawal already in progress");
+        emergencyWithdrawalInProgress = true;
+        emit EmergencyWithdrawalInitiated();
+    }
+
+    function forceExitUser(
+        address user
+    )
+    public
+    virtual
+    onlyOwner
+    nonReentrant
+    {
+        // NOTE: this pays all of guaranteed reward to the user, even ahead of schedule with humongous APY!
+        require(emergencyWithdrawalInProgress, "Emergency withdrawal not in progress");
+        UserStakingData storage userData = stakingDataByUser[user];
+        if (userData.amountStaked > 0) {
+            totalAmountStaked -= userData.amountStaked;
+            stakingToken.transfer(user, userData.amountStaked);
+            emit Unstaked(
+                user,
+                userData.amountStaked
+            );
+            //userData.amountStaked = 0;
+        }
+        uint256 userReward = userData.storedReward + userData.guaranteedReward;
+        if (userReward > 0) {
+            rewardToken.transfer(user, userReward);
+            totalStoredReward -= userData.storedReward;
+            totalGuaranteedReward -= userData.guaranteedReward;
+            emit RewardPaid(
+                user,
+                userReward
+            );
+            //userData.storedReward = 0;
+            //userData.guaranteedReward = 0;
+        }
+        // delete the whole thing to set everything as 0 and to save on gas
+        delete stakingDataByUser[user];
+    }
+
     // INTERNAL API
     // ============
 
@@ -289,7 +347,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             }
 
             require(
-                userData.stakes[i].timestamp < block.timestamp - lockedPeriod,
+                userData.stakes[i].timestamp <= block.timestamp - lockedPeriod,
                 "Unstaking is only allowed after the locked period has expired"
             );
             if (userData.stakes[i].amount > amountLeft) {
@@ -313,15 +371,15 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         userData.amountStaked -= amount;
         totalAmountStaked -= amount;
 
-        // If the user has a very low staked amount or guaranteed reward left, just pay all reward.
-        // This is probably necessary since we might get small rounding errors when handling rewards,
-        // and we might even end up in a state where the user has guaranteed reward and 0 staked amount, which would
-        // mean that the guaranteed reward can never be cleared.
-        if (
-            userData.guaranteedReward > 0 && (userData.amountStaked <= dustAmount || userData.guaranteedReward <= dustAmount)
-        ) {
+        // We need to make sure the user is left with no guaranteed reward if they have unstaked everything
+        // -- in that case, just add to stored reward.
+        if (userData.guaranteedReward > 0 && i == userData.stakes.length) {
             userData.storedReward += userData.guaranteedReward;
+            totalStoredReward += userData.guaranteedReward;
+
+            totalGuaranteedReward -= userData.guaranteedReward;
             userData.guaranteedReward = 0;
+
             userData.storedRewardUpdatedOn = block.timestamp;
         }
 

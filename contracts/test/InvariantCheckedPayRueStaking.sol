@@ -10,6 +10,8 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     mapping(address => bool) public isStaker;
     uint256 public deployedOn;
     bool public enableLogging;
+    uint256 public lowestMinStakeAmount;
+    uint256 public totalAmountEverStaked;
 
     // Invariant checking API
     // ======================
@@ -88,37 +90,13 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             );
         }
 
-        //if (totalGuaranteedReward < totalGuaranteedRewardBefore) {
-        //    // if guaranteed reward decreased, stored reward must increase at least as much
-        //    // TODO: seems not to be the case
-        //    requireChangedBySameAmount(
-        //        totalGuaranteedRewardBefore,
-        //        totalGuaranteedReward,
-        //        // these are flipped because it's an increase for a decrease
-        //        totalStoredReward,
-        //        totalStoredRewardBefore
-        //    );
-        //}
-
-        //if (totalLockedReward() > totalLockedRewardBefore) {
-        //    // reward locked increased => there must have been new stakes
-        //    // TODO: NOPE! it might also mean that the staking period has been passed without claims
-        //    requireChangedBySameAmount(
-        //        totalAmountStakedBefore,
-        //        totalAmountStaked,
-        //        totalLockedRewardBefore,
-        //        totalLockedReward()
-        //    );
-        //}
-
         if (totalLockedReward() < totalLockedRewardBefore) {
-            // if total locked reward decreased, it means a reward was claimed
-            requireChangedBySameAmount(
-                rewardTokenBalanceBefore,
-                rewardToken.balanceOf(address(this)),
-                totalLockedRewardBefore,
-                totalLockedReward()
-            );
+            // if total locked reward decreased, it means a reward was claimed. maybe also an unstake
+            // note that we cannot really assert that rewards were claimed by the exact amount, because
+            // it's also possible that non-locked rewards were claimed
+            uint256 lockedRewardDifference = totalLockedRewardBefore - totalLockedReward();
+            uint256 rewardTokenBalanceDifference = rewardTokenBalanceBefore - rewardToken.balanceOf(address(this));
+            require(rewardTokenBalanceDifference >= lockedRewardDifference);
         }
     }
 
@@ -142,7 +120,10 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
 
         uint256 maxLockedReward = totalAmountStaked;
         if (block.timestamp - deployedOn > yieldPeriod) {
-            maxLockedReward = totalAmountStaked * (block.timestamp - deployedOn) / yieldPeriod;
+            // yield period has passed, it's possible that there have been unstakes
+            // NOTE: we don't really care about emergency withdrawal because
+            // that allows forced exit which unstakes AND claims all reward
+            maxLockedReward = totalAmountEverStaked * (block.timestamp - deployedOn) / yieldPeriod;
         }
         require(totalLockedReward() <= maxLockedReward);
 
@@ -153,8 +134,8 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         for (uint256 i = 0; i < stakers.length; i++) {
             UserStakingData storage userData = stakingDataByUser[stakers[i]];
             require(userData.storedRewardUpdatedOn <= block.timestamp);
-            require(userData.guaranteedReward == 0 || userData.guaranteedReward > dustAmount);
-            require(userData.amountStaked == 0 || userData.amountStaked > dustAmount);
+            //require(userData.guaranteedReward == 0 || userData.guaranteedReward > dustAmount);
+            //require(userData.amountStaked == 0 || userData.amountStaked > dustAmount);
             totalAmountStakedCalculatedFromUsers += userData.amountStaked;
             totalGuaranteedRewardCalculatedFromUsers += userData.guaranteedReward;
             totalStoredRewardCalculatedFromUsers += userData.storedReward;
@@ -162,7 +143,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             for (uint256 j = 0; j < userData.stakes.length; j++) {
                 Stake storage userStake = userData.stakes[j];
                 totalAmountStakedCalculatedFromStakes += userStake.amount;
-                if (userStake.amount < minStakeAmount) {
+                if (userStake.amount < lowestMinStakeAmount) {
                     // fully or partially unstaked, enforce timestamp is ok
                     require(userStake.timestamp <= block.timestamp + lockedPeriod);
                     // previous must also be (fully) unstaked
@@ -244,6 +225,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     PayRueStaking(_stakingToken, _rewardToken)
     {
         deployedOn = block.timestamp;
+        lowestMinStakeAmount = minStakeAmount;
     }
 
 
@@ -255,6 +237,7 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
     addStaker(msg.sender)
     checkInvariants()
     {
+        totalAmountEverStaked += amount;
         super.stake(amount);
     }
 
@@ -308,5 +291,37 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
         enforceGenericInvariants(false);
         super.withdrawTokens(token, amount);
         enforceGenericInvariants(false);
+    }
+
+    function setMinStakeAmount(
+        uint256 newMinStakeAmount
+    )
+    public
+    override
+    checkInvariants()
+    {
+        if (newMinStakeAmount < lowestMinStakeAmount) {
+            lowestMinStakeAmount = newMinStakeAmount;
+        }
+        super.setMinStakeAmount(newMinStakeAmount);
+    }
+
+    function initiateEmergencyWithdrawal()
+    public
+    override
+    checkInvariants()
+    {
+        super.initiateEmergencyWithdrawal();
+    }
+
+    function forceExitUser(
+        address user
+    )
+    public
+    override
+    addStaker(user)
+    checkInvariants()
+    {
+        super.forceExitUser(user);
     }
 }
