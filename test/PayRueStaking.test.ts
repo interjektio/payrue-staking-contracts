@@ -53,18 +53,18 @@ const CONFIGS: TestConfig[] = [
         rewardNumerator: 1249_653022,
         rewardDenominator:  1_000000,
     },
-    //{
-    //    contractName: 'InvariantCheckedPayRueStaking',
-    //    stakingTokenIsRewardToken: false,
-    //    rewardNumerator: 1249_653022,
-    //    rewardDenominator:  1_000000,
-    //}
-    //{
-    //    contractName: 'InvariantCheckedPayRueStaking',
-    //    stakingTokenIsRewardToken: true,
-    //    rewardNumerator: 1249_653022,
-    //    rewardDenominator:  1_000000,
-    //}
+    {
+        contractName: 'InvariantCheckedPayRueStaking',
+        stakingTokenIsRewardToken: false,
+        rewardNumerator: 1249_653022,
+        rewardDenominator:  1_000000,
+    },
+    {
+        contractName: 'InvariantCheckedPayRueStaking',
+        stakingTokenIsRewardToken: true,
+        rewardNumerator: 1249_653022,
+        rewardDenominator:  1_000000,
+    },
 ];
 
 for (let {

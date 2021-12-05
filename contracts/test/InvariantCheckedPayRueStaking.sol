@@ -48,10 +48,10 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
 
         if (_stakingTokenIsRewardToken) {
             if (totalAmountStaked > totalAmountStakedBefore) {
-                // new stake, new staked amount + new locked amount = staking token balance change * 2
+                // new stake, new staked amount + new locked amount = staking token balance change + staking token balance change * reward
                 requireChangedBySameAmount(
-                    stakingTokenBalanceBefore * 2,
-                    stakingToken.balanceOf(address(this)) * 2,
+                    stakingTokenBalanceBefore + (stakingTokenBalanceBefore * rewardNumerator / rewardDenominator),
+                    stakingToken.balanceOf(address(this)) + (stakingToken.balanceOf(address(this)) * rewardNumerator / rewardDenominator),
                     totalAmountStakedBefore + totalLockedRewardBefore,
                     totalAmountStaked + totalLockedReward()
                 );
@@ -85,8 +85,8 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             requireChangedBySameAmount(
                 totalGuaranteedRewardBefore + totalStoredRewardBefore,
                 totalGuaranteedReward + totalStoredReward,
-                totalAmountStakedBefore,
-                totalAmountStaked
+                totalAmountStakedBefore * rewardNumerator / rewardDenominator,
+                totalAmountStaked * rewardNumerator / rewardDenominator
             );
         }
 
@@ -118,12 +118,12 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
             require(totalLockedReward() <= rewardToken.balanceOf(address(this)));
         }
 
-        uint256 maxLockedReward = totalAmountStaked;
+        uint256 maxLockedReward = totalAmountStaked * rewardNumerator / rewardDenominator;
         if (block.timestamp - deployedOn > yieldPeriod) {
             // yield period has passed, it's possible that there have been unstakes
             // NOTE: we don't really care about emergency withdrawal because
             // that allows forced exit which unstakes AND claims all reward
-            maxLockedReward = totalAmountEverStaked * (block.timestamp - deployedOn) / yieldPeriod;
+            maxLockedReward = totalAmountEverStaked * rewardNumerator * (block.timestamp - deployedOn) / rewardDenominator / yieldPeriod;
         }
         require(totalLockedReward() <= maxLockedReward);
 
