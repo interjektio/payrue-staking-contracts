@@ -53,6 +53,8 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     IERC20 public stakingToken;
     IERC20 public rewardToken;
     bool internal _stakingTokenIsRewardToken;
+    uint256 public rewardNumerator;
+    uint256 public rewardDenominator;
 
     uint256 public minStakeAmount = 10_000 ether; // should be at least 1
     bool public emergencyWithdrawalInProgress = false;
@@ -66,13 +68,21 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
 
     constructor(
         address _stakingToken,
-        address _rewardToken
+        address _rewardToken,
+        uint256 _rewardNumerator,
+        uint256 _rewardDenominator
     )
     Ownable()
     {
+        require(_rewardNumerator != 0, "Reward numerator cannot be 0");  // would mean zero reward
+        require(_rewardDenominator != 0, "Reward denominator cannot be 0");  // would mean division by zero
+
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
         _stakingTokenIsRewardToken = _stakingToken == _rewardToken;
+
+        rewardNumerator = _rewardNumerator;
+        rewardDenominator = _rewardDenominator;
     }
 
     // PUBLIC USER API
@@ -90,7 +100,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         require(amount >= minStakeAmount, "Minimum stake amount not met");
         // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
         require(
-            availableToStakeOrReward() >= amount,
+            availableToStake() >= amount,
             "Not enough rewards left to accept new stakes for given amount"
         );
         require(
@@ -109,8 +119,12 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         }));
         userData.amountStaked += amount;
         totalAmountStaked += amount;
-        userData.guaranteedReward += amount;
-        totalGuaranteedReward += amount;
+
+        uint256 rewardAmount = amount * rewardNumerator / rewardDenominator;
+        require(rewardAmount > 0, "Zero reward amount");
+
+        userData.guaranteedReward += rewardAmount;
+        totalGuaranteedReward += rewardAmount;
         userData.storedRewardUpdatedOn = block.timestamp;  // may waste some gas, but would rather be safe than sorry
 
         emit Staked(
@@ -153,7 +167,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     // PUBLIC VIEWS AND UTILITIES
     // ==========================
 
-    function availableToStakeOrReward()
+    function availableToStake()
     public
     view
     returns (uint256 stakeable)
@@ -162,6 +176,28 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
         if (_stakingTokenIsRewardToken) {
             stakeable -= totalAmountStaked;
         }
+        stakeable = stakeable * rewardDenominator / rewardNumerator;
+    }
+
+    function availableToReward()
+    public
+    view
+    returns (uint256 rewardable)
+    {
+        rewardable = rewardToken.balanceOf(address(this)) - totalLockedReward();
+        if (_stakingTokenIsRewardToken) {
+            rewardable -= totalAmountStaked;
+        }
+    }
+
+    function availableToStakeOrReward()
+    public
+    view
+    returns (uint256 stakeable)
+    {
+        // NOTE: this is a misnomer if rewardNumerator/rewardDenominator != 1, thus it's deprecated and only for
+        // backwards compatibility
+        stakeable = availableToStake();
     }
 
     function totalLockedReward()
@@ -219,7 +255,7 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
     nonReentrant
     {
         if (token == address(rewardToken)) {
-            require(amount <= availableToStakeOrReward(), "Can only withdraw up to balance minus locked amount");
+            require(amount <= availableToReward(), "Can only withdraw up to balance minus locked amount");
         } else if (token == address(stakingToken)) {
             uint256 maxAmount = stakingToken.balanceOf(address(this)) - totalAmountStaked;
             require(amount <= maxAmount, "Cannot withdraw staked tokens");
@@ -425,12 +461,12 @@ contract PayRueStaking is ReentrancyGuard, Ownable {
             return 0;
         }
         uint256 timePassedFromLastUpdate = block.timestamp - userData.storedRewardUpdatedOn;
-        storedRewardToAdd = (userData.amountStaked * timePassedFromLastUpdate) / yieldPeriod;
+        storedRewardToAdd = (userData.amountStaked * rewardNumerator * timePassedFromLastUpdate / rewardDenominator) / yieldPeriod;
 
         // We can pay out more than guaranteed, but only if we have enough non-locked funds for it
         if (storedRewardToAdd > userData.guaranteedReward) {
             uint256 excess = storedRewardToAdd - userData.guaranteedReward;
-            uint256 available = availableToStakeOrReward();
+            uint256 available = availableToReward();
             if (excess > available) {
                 storedRewardToAdd = storedRewardToAdd - excess + available;
             }

@@ -21,7 +21,9 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         from: deployer,
         args: [
             propelTokenAddress,
-            propelTokenAddress
+            propelTokenAddress,
+            1,
+            1
         ],
         log: true,
     });

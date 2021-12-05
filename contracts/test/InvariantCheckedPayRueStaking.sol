@@ -220,9 +220,11 @@ contract InvariantCheckedPayRueStaking is PayRueStaking {
 
     constructor(
         address _stakingToken,
-        address _rewardToken
+        address _rewardToken,
+        uint256 _rewardNumerator,
+        uint256 _rewardDenominator
     )
-    PayRueStaking(_stakingToken, _rewardToken)
+    PayRueStaking(_stakingToken, _rewardToken, _rewardNumerator, _rewardDenominator)
     {
         deployedOn = block.timestamp;
         lowestMinStakeAmount = minStakeAmount;
