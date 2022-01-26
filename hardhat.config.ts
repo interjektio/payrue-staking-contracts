@@ -56,6 +56,12 @@ export default {
             gasPrice: 10_000_000_000, // 10 GWei
             accounts: privateKeys,
         },
+        matic: {
+            url: 'https://polygon-rpc.com/',
+            chainId: 137,
+            gasPrice: 50_000_000_000, // 50 GWei
+            accounts: privateKeys,
+        },
     },
     namedAccounts: {
         deployer: {

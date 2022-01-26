@@ -31,6 +31,8 @@ Deployment
 npm install
 export DEPLOYER_PRIVATE_KEY=0x123...
 export ETHERSCAN_API_KEY=...  # optional
-npx hardhat --network NETWORK deploy  # where NETWORK is bsc, bsc-testnet or hardhat
+# optional: configure ~/.tenderly/config.yaml to support tenderly verification
+npx hardhat --network NETWORK deploy  # where NETWORK is bsc, bsc-testnet, matic or hardhat
 npx hardhat --network NETWORK etherscan-verify
+npx hardhat --network NETWORK tenderly:verify PayrueStaking=0x123...
 ```
