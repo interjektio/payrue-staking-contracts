@@ -431,6 +431,55 @@ for (let {
                 tx = await staking.connect(anotherAccount).exit();
                 expect(await getTokenBalanceChange(tx, stakingToken, anotherAccount)).to.equal(eth('15 000'));
             });
+
+
+            if (rewardNumerator === 1 && rewardDenominator === 10) {
+                it('double-check Mercury-specific calculated amounts', async () => {
+                    await initTest({
+                        stakedAmount: '20 000',
+                    });
+                    expect(await staking.rewardClaimable(stakerAddress)).to.equal(0);
+
+                    await timeTravel({ days: 365, mine: true });
+                    expect(await staking.rewardClaimable(stakerAddress)).to.equal(
+                        eth('2 000')
+                    );
+                });
+
+                it('double-check Mercury-specific claimed amounts amounts', async () => {
+                    await initTest({
+                        stakedAmount: '12 345',
+                    });
+
+                    await timeTravel({ days: 181, hours: 12, mine: true });
+                    await timeTravel({ days: 183, hours: 12 });
+
+                    let tx: any;
+                    await expect(
+                        () => tx = staking.claimReward(),
+                    ).to.changeTokenBalances(
+                        rewardToken,
+                        [stakerAccount, staking],
+                        [eth('1 234.5'), eth('-1 234.5')]
+                    );
+
+                    await expect(tx).to.emit(staking, 'RewardPaid').withArgs(
+                        stakerAddress,
+                        eth('1 234.5'),
+                    );
+
+                    await timeTravel({ days: 182, hours: 12 });
+
+
+                    await expect(
+                        () => tx = staking.claimReward(),
+                    ).to.changeTokenBalances(
+                        rewardToken,
+                        [stakerAccount, staking],
+                        [eth('617.25'), eth('-617.25')]
+                    );
+                });
+            }
         });
 
         describe('exit', () => {
