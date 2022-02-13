@@ -8,9 +8,13 @@ dotenv.config();
 
 const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || '';
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || '';
+const INFURA_API_KEY = process.env.INFURA_API_KEY || '';
 
 if (!DEPLOYER_PRIVATE_KEY) {
     console.warn('DEPLOYER_PRIVATE_KEY missing, deployment not working');
+}
+if (!INFURA_API_KEY) {
+    console.warn('INFURA_API_KEY missing, deployments to the Ethereum network');
 }
 
 // This is a sample Hardhat task. To learn how to create your own go to
@@ -43,6 +47,14 @@ export default {
     networks: {
         hardhat: {
             allowUnlimitedContractSize: disableOptimizer,
+        },
+        mainnet: { // Ethereum mainnet
+            url: `https://mainnet.infura.io/v3/${INFURA_API_KEY}`,
+            accounts: privateKeys,
+        },
+        rinkeby: { // Ethereum mainnet
+            url: `https://rinkeby.infura.io/v3/${INFURA_API_KEY}`,
+            accounts: privateKeys,
         },
         bsc: {
             url: 'https://bsc-dataseed.binance.org/',
