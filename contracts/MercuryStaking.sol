@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /**
-* The PayRue Staking Contract
+* The Mercury Staking Contract
 *
 * Features and assumptions:
 * - Users stake token A and receive token B. These can be same or different tokens.
@@ -16,7 +16,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract PayRueStaking is ReentrancyGuard, Ownable {
+contract MercuryStaking is ReentrancyGuard, Ownable {
     event Staked(
         address indexed user,
         uint256 amount

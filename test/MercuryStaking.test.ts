@@ -26,44 +26,44 @@ interface TestConfig {
 // We run all tests both with the regular contract and that contract, to catch even more bugs.
 const CONFIGS: TestConfig[] = [
     {
-        contractName: 'PayRueStaking',
+        contractName: 'MercuryStaking',
         stakingTokenIsRewardToken: true,
     },
     {
-        contractName: 'PayRueStaking',
+        contractName: 'MercuryStaking',
         stakingTokenIsRewardToken: false,
     },
     {
-        contractName: 'InvariantCheckedPayRueStaking',
+        contractName: 'InvariantCheckedMercuryStaking',
         stakingTokenIsRewardToken: true,
     },
     {
-        contractName: 'InvariantCheckedPayRueStaking',
+        contractName: 'InvariantCheckedMercuryStaking',
         stakingTokenIsRewardToken: false,
     },
     {
-        contractName: 'PayRueStaking',
+        contractName: 'MercuryStaking',
         stakingTokenIsRewardToken: false,
-        rewardNumerator: 1249_653022,
-        rewardDenominator:  1_000000,
+        rewardNumerator: 1,
+        rewardDenominator:  10,
     },
     {
-        contractName: 'PayRueStaking',
+        contractName: 'MercuryStaking',
         stakingTokenIsRewardToken: true,
-        rewardNumerator: 1249_653022,
-        rewardDenominator:  1_000000,
+        rewardNumerator: 1,
+        rewardDenominator:  10,
     },
     {
-        contractName: 'InvariantCheckedPayRueStaking',
+        contractName: 'InvariantCheckedMercuryStaking',
         stakingTokenIsRewardToken: false,
-        rewardNumerator: 1249_653022,
-        rewardDenominator:  1_000000,
+        rewardNumerator: 1,
+        rewardDenominator:  10,
     },
     {
-        contractName: 'InvariantCheckedPayRueStaking',
+        contractName: 'InvariantCheckedMercuryStaking',
         stakingTokenIsRewardToken: true,
-        rewardNumerator: 1249_653022,
-        rewardDenominator:  1_000000,
+        rewardNumerator: 1,
+        rewardDenominator:  10,
     },
 ];
 
@@ -111,8 +111,8 @@ for (let {
                 rewardToken = await TestToken.deploy("Reward token", "REWARD");
             }
 
-            const PayRueStaking = await ethers.getContractFactory(contractName);
-            adminStaking = await PayRueStaking.deploy(
+            const MercuryStaking = await ethers.getContractFactory(contractName);
+            adminStaking = await MercuryStaking.deploy(
                 stakingToken.address,
                 rewardToken.address,
                 rewardNumerator,

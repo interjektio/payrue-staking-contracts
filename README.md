@@ -1,4 +1,4 @@
-PayRue Staking Contracts
+Mercury Staking Contracts
 ========================
 
 Features and assumptions:
