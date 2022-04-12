@@ -36,3 +36,8 @@ npx hardhat --network NETWORK deploy  # where NETWORK is bsc, bsc-testnet, matic
 npx hardhat --network NETWORK etherscan-verify
 npx hardhat --network NETWORK tenderly:verify PayrueStaking=0x123...
 ```
+
+Audit
+-----
+
+The contracts have been audited by Ville Sundell. [See audit report](audits/PayRue%20Staking%20Contract%20audit%20report.pdf).
