@@ -48,7 +48,7 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
         Stake[] stakes;
     }
 
-    uint256 public constant lockedPeriod = 365 days;
+    uint256 public constant lockedPeriod = 180 days;
     uint256 public constant yieldPeriod = 365 days;
 
     IERC20 public stakingToken;
@@ -62,6 +62,8 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
     bool public paused = false;
 
     mapping(address => UserStakingData) stakingDataByUser;
+
+    uint256 public totalPenaltyAmount = 0;
 
     uint256 public totalAmountStaked = 0;
     uint256 public totalGuaranteedReward = 0;
@@ -98,7 +100,7 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
     {
         require(!paused, "Staking is temporarily paused, no new stakes accepted");
         require(!emergencyWithdrawalInProgress, "Emergency withdrawal in progress, no new stakes accepted");
-        require(amount >= minStakeAmount, "Minimum stake amount not met");
+        require(amount > 0, "Minimum stake amount not met");
         // This needs to be checked before accepting the stake, in case stakedToken and rewardToken are the same
         require(
             availableToStake() >= amount,
@@ -376,6 +378,7 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
         _updateStoredReward(userData);
 
         uint256 amountLeft = amount;
+        uint256 penaltyAmount = 0;
 
         uint256 i = userData.firstActiveStakeIndex;
         for (; i < userData.stakes.length; i++) {
@@ -383,10 +386,6 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
                 continue;
             }
 
-            require(
-                userData.stakes[i].timestamp <= block.timestamp - lockedPeriod,
-                "Unstaking is only allowed after the locked period has expired"
-            );
             if (userData.stakes[i].amount > amountLeft) {
                 userData.stakes[i].amount -= amountLeft;
                 amountLeft = 0;
@@ -397,6 +396,18 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
                 userData.stakes[i].amount = 0;
                 delete userData.stakes[i];  // this should be safe and saves a little bit of gas, but also leaves a gap in the array
             }
+
+            //calculate penalty amount
+            uint256 daysStaked = (block.timestamp - userData.stakes[i].timestamp) / 60 / 60 / 24;
+            if(daysStaked < 90){
+                penaltyAmount += amount - ((amount * 20) / 100);
+            } else if ( daysStaked >= 90 && daysStaked < 150) {
+                penaltyAmount += amount - ((amount * 15) / 100);
+            } else if (daysStaked >= 150 && daysStaked < 180) {
+                penaltyAmount += amount - ((amount * 10) / 100);
+            }
+            totalPenaltyAmount += penaltyAmount;
+
         }
 
         require(
@@ -421,7 +432,7 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
         }
 
         require(
-            stakingToken.transfer(msg.sender, amount),
+            stakingToken.transfer(msg.sender, amount - penaltyAmount),
             "Transferring staked token back to sender failed"
         );
 
