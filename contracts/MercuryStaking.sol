@@ -49,7 +49,7 @@ contract MercuryStaking is ReentrancyGuard, Ownable {
     }
 
     uint256 public constant lockedPeriod = 180 days;
-    uint256 public constant yieldPeriod = 365 days;
+    uint256 public constant yieldPeriod = 180 days;
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
