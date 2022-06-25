@@ -181,12 +181,6 @@ for (let {
                 ).to.be.revertedWith('ERC20: transfer amount exceeds balance');
             });
 
-            it('cannot stake less than min amount', async () => {
-                const minAmount = await staking.minStakeAmount();
-                await expect(
-                    staking.stake(minAmount.sub(1))
-                ).to.be.revertedWith('Minimum stake amount not met');
-            });
 
             it('cannot stake more than available reward amount', async () => {
                 await stakingToken.mint(stakerAddress, eth('1 000 000 000').add(1));
