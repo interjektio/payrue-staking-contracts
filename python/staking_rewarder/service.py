@@ -42,21 +42,27 @@ class StakingRewarder:
             user_addresses: List[str],
             block_number: int,
     ) -> List[Reward]:
-        print(self.staking_contract.all_functions())
+        """
+        totalAmountStaked: return the total amount of staked tokens for all users
+        staked: return the amount of staked tokens for a user
+        """
         reward_list: List[Reward] = []
+        staked_list = []
         total_amount_staked = self.staking_contract.functions.totalAmountStaked().call(
             block_identifier=block_number,
         )
         for user_address in user_addresses:
-            staked = self.staking_contract.functions.staked(user_address).call()
-            print('staked: ', staked)
-            reward_percentage = staked / total_amount_staked
+            staked = self.staking_contract.functions.staked(user_address).call(
+                block_identifier=block_number,
+            )
+            reward_percentage = Decimal(staked) / total_amount_staked
             reward_list.append(
                 Reward(
                     user_address=user_address,
                     reward_percentage=reward_percentage,
                 )
             )
+            staked_list.append(staked)
         return reward_list
 
     def get_staker_addresses(
@@ -64,9 +70,6 @@ class StakingRewarder:
             start_block_number: int,
             end_block_number: int,
     ) -> set[Any]:
-        # TODO: fill this, copy from tools/staking_snapshot.py
-        # Also copy the utils to this folder
-        print('self.staking_contract.events.Staked(): ', self.staking_contract.events.Staked())
         events = get_events(
             event=self.staking_contract.events.Staked(),
             from_block=start_block_number,
@@ -88,7 +91,6 @@ class StakingRewarder:
 
         If the month has not yet passed, do nothing
         """
-        # TODO: fill later
         pass
 
     def distribute_rewards(
@@ -102,10 +104,6 @@ class StakingRewarder:
 
 def main():
     enable_logging()
-    # Local testnet with hardhat
-    # web3 = Web3(Web3.HTTPProvider("http://localhost:8545/"))
-    # staking_contract_address = web3.to_checksum_address('0x5FbDB2315678afecb367f032d93F642f64180aa3')
-
     # polygon network
     rpc_url = 'https://polygon-rpc.com/'
     web3 = get_web3(rpc_url)
@@ -114,17 +112,18 @@ def main():
         web3=web3,
         staking_contract_address=staking_contract_address,
     )
-    block_number = 30170208
-    print('block_number: ', block_number)
+    block_number = 24199659
 
     # enable this to get the pre-mined stakers list.
-    # user_addresses = get_staker_list()
+    # user_addresses = get_staker_list(30170208)
 
     user_addresses = []
     if not user_addresses:
-        user_addresses = rewarder.get_staker_addresses(
-            start_block_number=24199659,
-            end_block_number=block_number,
+        user_addresses.extend(
+            rewarder.get_staker_addresses(
+                start_block_number=24199659,
+                end_block_number=block_number,
+            )
         )
     print("Stakers:", user_addresses)
     rewards = rewarder.get_rewards_at_block(
