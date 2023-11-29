@@ -1,16 +1,18 @@
 from .metadata import Base, metadata
-from .rewards import Reward, DistributionRound
+from .rewards import RewardDistribution, DistributionRound, RewardState
 from sqlalchemy.orm import sessionmaker
-
-from ..__main__ import config
 from sqlalchemy import create_engine
 
 __all__ = [
     'Base',
     'metadata',
-    'Reward',
+    'RewardDistribution',
     'DistributionRound',
+    'RewardState'
 ]
+
+from .. import config
+
 """Initialize database tables."""
 db_connection_string = config['database']['sqlalchemy.url']
 

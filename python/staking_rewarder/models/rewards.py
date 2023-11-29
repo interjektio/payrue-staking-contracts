@@ -1,7 +1,7 @@
 import enum
 
-from sqlalchemy import Column, Integer, String, Float, DOUBLE_PRECISION, Enum
-
+from sqlalchemy import (Column, Integer, String, Float, DOUBLE_PRECISION, Enum, ForeignKey, BigInteger)
+from sqlalchemy.orm import relationship
 from .metadata import Base
 
 
@@ -11,13 +11,15 @@ class RewardState(enum.Enum):
     unsent = "unsent"
 
 
-class Reward(Base):
-    __tablename__ = 'reward'
+class RewardDistribution(Base):
+    __tablename__ = 'reward_distribution'
     id = Column(Integer, primary_key=True)
     user_address = Column(String)
     percentage = Column(DOUBLE_PRECISION)
-    amount = Column(Float)
+    amount_wei = Column(BigInteger)
     state = Column(Enum(RewardState), nullable=False, default=RewardState.unsent, server_default="unsent")
+    distribution_round_id = Column(Integer, ForeignKey('distribution_round.id'))
+    distribution_round = relationship("DistributionRound", back_populates="reward_distributions")
 
 
 class DistributionRound(Base):
@@ -25,3 +27,4 @@ class DistributionRound(Base):
     id = Column(Integer, primary_key=True)
     year = Column(Integer)
     month = Column(Integer)
+    reward_distributions = relationship("RewardDistribution", back_populates="distribution_round")
