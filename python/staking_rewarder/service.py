@@ -1,16 +1,18 @@
 import datetime
 import json
+import logging
 import os
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import List, Set, Any
-from dataclasses import dataclass
-
 from web3 import Web3
 
+from sqlalchemy import select
+from .models import RewardDistribution, DistributionRound, RewardState, db_session
 from .stakerslist import get_staker_list
-from .utils import to_address, get_web3, get_events, enable_logging
+from .utils import to_address, get_web3, get_events, enable_logging, get_closest_block
+from dateutil.relativedelta import relativedelta
 
-# read the PayRueStaking.json file and get the abi object
 abi_path = os.path.join(os.path.dirname(__file__), 'abi')
 abi_file = os.path.join(abi_path, 'PayRueStaking.json')
 ABI = json.loads(open(abi_file).read())
@@ -18,9 +20,10 @@ ABI = json.loads(open(abi_file).read())
 
 @dataclass
 class Reward:
-    # TODO: fill this. Also this might actually be an SQLAlchemy model
     user_address: str
-    reward_percentage: Decimal
+    percentage: Decimal
+    state: RewardState
+    amount: Decimal = Decimal(0)
 
 
 class StakingRewarder:
@@ -34,7 +37,9 @@ class StakingRewarder:
         self.staking_contract = self.web3.eth.contract(
             abi=ABI,
             address=to_address(staking_contract_address)
-        )  # TODO: fill this
+        )
+        self.db_session = db_session
+        self.logger = logging.getLogger(__name__)
 
     def get_rewards_at_block(
             self,
@@ -46,24 +51,24 @@ class StakingRewarder:
         totalAmountStaked: return the total amount of staked tokens for all users
         staked: return the amount of staked tokens for a user
         """
-        reward_list: List[Reward] = []
-        staked_list = []
+        rewards: List[Reward] = []
         total_amount_staked = self.staking_contract.functions.totalAmountStaked().call(
             block_identifier=block_number,
         )
+        print('total_amount_staked: ', total_amount_staked)
         for user_address in user_addresses:
             staked = self.staking_contract.functions.staked(user_address).call(
                 block_identifier=block_number,
             )
             reward_percentage = Decimal(staked) / total_amount_staked
-            reward_list.append(
+            rewards.append(
                 Reward(
                     user_address=user_address,
-                    reward_percentage=reward_percentage,
+                    percentage=reward_percentage,
+                    state=RewardState.unsent,
                 )
             )
-            staked_list.append(staked)
-        return reward_list
+        return rewards
 
     def get_staker_addresses(
             self,
@@ -81,6 +86,33 @@ class StakingRewarder:
             for e in events
         )
 
+    @staticmethod
+    def get_last_day_of_month(year: int, month: int):
+        snapshot_datetime = datetime.datetime(
+            year=year,
+            month=month,
+            day=1,
+            tzinfo=datetime.timezone.utc
+        )
+        last_day_of_month = snapshot_datetime + relativedelta(months=1, microseconds=-1)
+        return last_day_of_month
+
+    @staticmethod
+    def has_month_passed(last_day_of_month: datetime):
+        current_datetime = datetime.datetime.now(datetime.timezone.utc)
+        return last_day_of_month <= current_datetime
+
+    def get_distribution_round(self, year: int, month: int) -> DistributionRound:
+        """
+        Get all distribution rounds
+        :return:
+        """
+        stmt = select(DistributionRound).where(
+            DistributionRound.year == year,
+            DistributionRound.month == month,
+        )
+        return self.db_session.execute(stmt).scalars().first()
+
     def figure_out_rewards_for_month(
             self,
             year: int,
@@ -91,15 +123,83 @@ class StakingRewarder:
 
         If the month has not yet passed, do nothing
         """
-        pass
+        last_day_of_month = self.get_last_day_of_month(year, month)
+
+        if not self.has_month_passed(last_day_of_month):
+            return
+
+        # we only distribute rewards once per user per month
+        distribution_round = self.get_distribution_round(
+            year=last_day_of_month.year,
+            month=last_day_of_month.month,
+        )
+        if distribution_round:
+            self.logger.info('Rewards already distributed for this month')
+            return
+
+        closest_block = get_closest_block(
+            self.web3,
+            last_day_of_month,
+        )
+        print(
+            'closest_block: ',
+            closest_block['number'],
+            datetime.datetime.utcfromtimestamp(
+                closest_block['timestamp'])
+        )
+        block_number = closest_block['number']
+        start_block_number = 24199659  # TODO: should be the end block number of the previous month if it exists in the database
+        staker_addresses = self.get_staker_addresses(
+            start_block_number=start_block_number,
+            end_block_number=block_number,
+        )
+        rewards = self.get_rewards_at_block(
+            user_addresses=list(staker_addresses),
+            block_number=block_number,
+        )
+        # revenue 1_000_000 as an example
+        # total_revenue = self.web3.to_wei(1_000_000, 'ether')
+
+        if not distribution_round:
+            return rewards
 
     def distribute_rewards(
             self,
+            rewards: List[Reward],
+            year: int,
+            month: int,
     ):
         """
         Send all unsent rewards to users
         :return:
         """
+        if not rewards:
+            self.logger.info('No rewards to distribute')
+            return
+
+        distribution_round = self.get_distribution_round(
+            year=year,
+            month=month,
+        )
+        if not distribution_round:
+            distribution_round = DistributionRound(
+                year=year,
+                month=month,
+            )
+            self.db_session.add(distribution_round)
+            self.db_session.flush()
+
+        for reward in rewards:
+            reward_distribution = RewardDistribution(
+                user_address=reward.user_address,
+                percentage=reward.percentage,
+                amount=reward.amount,
+                state=RewardState.sent,
+            )
+            reward_distribution.distribution_round_id = distribution_round.id
+            self.db_session.add(reward_distribution)
+
+        self.db_session.commit()
 
 
 def main():
@@ -112,26 +212,12 @@ def main():
         web3=web3,
         staking_contract_address=staking_contract_address,
     )
-    block_number = 24199659
-
-    # enable this to get the pre-mined stakers list.
-    # user_addresses = get_staker_list(30170208)
-
-    user_addresses = []
-    if not user_addresses:
-        user_addresses.extend(
-            rewarder.get_staker_addresses(
-                start_block_number=24199659,
-                end_block_number=block_number,
-            )
-        )
-    print("Stakers:", user_addresses)
-    rewards = rewarder.get_rewards_at_block(
-        user_addresses=user_addresses,
-        block_number=block_number,
+    rewards = rewarder.figure_out_rewards_for_month(
+        year=2022,
+        month=1,
     )
-
-    for reward in rewards:
-        print(reward)
-    sum_rewards = sum(r.reward_percentage for r in rewards)
-    print('sum_rewards: ', sum_rewards)
+    rewarder.distribute_rewards(
+        rewards=rewards,
+        year=2022,
+        month=1,
+    )
