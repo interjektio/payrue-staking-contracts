@@ -17,10 +17,12 @@ from web3.types import BlockData
 
 logger = logging.getLogger(__name__)
 THIS_DIR = os.path.dirname(__file__)
-ABI_DIR = os.path.join(THIS_DIR, 'abi')
+ABI_DIR = os.path.join(THIS_DIR, "abi")
 
 
-def get_web3(rpc_url: str, *, account: Optional[LocalAccount] = None, provider_kwargs=None) -> Web3:
+def get_web3(
+    rpc_url: str, *, account: Optional[LocalAccount] = None, provider_kwargs=None
+) -> Web3:
     if provider_kwargs is None:
         provider_kwargs = {}
     web3 = Web3(Web3.HTTPProvider(rpc_url, **provider_kwargs))
@@ -46,7 +48,7 @@ def set_web3_account(*, web3: Web3, account: LocalAccount) -> Web3:
 
 
 def load_abi(name: str) -> List[Dict[str, Any]]:
-    abi_path = os.path.join(ABI_DIR, f'{name}.json')
+    abi_path = os.path.join(ABI_DIR, f"{name}.json")
     assert os.path.abspath(abi_path).startswith(os.path.abspath(ABI_DIR))
     with open(abi_path) as f:
         return json.load(f)
@@ -58,18 +60,28 @@ def get_events(
     from_block: int,
     to_block: int,
     batch_size: int = 1_000,
-    argument_filters=None
+    argument_filters=None,
 ):
     """Load events in batches"""
     if to_block < from_block:
-        raise ValueError(f'to_block {to_block} is smaller than from_block {from_block}')
+        raise ValueError(f"to_block {to_block} is smaller than from_block {from_block}")
 
-    logger.info('fetching events from %s to %s with batch size %s', from_block, to_block, batch_size)
+    logger.info(
+        "fetching events from %s to %s with batch size %s",
+        from_block,
+        to_block,
+        batch_size,
+    )
     ret = []
     batch_from_block = from_block
     while batch_from_block <= to_block:
         batch_to_block = min(batch_from_block + batch_size, to_block)
-        logger.info('fetching batch from %s to %s (up to %s)', batch_from_block, batch_to_block, to_block)
+        logger.info(
+            "fetching batch from %s to %s (up to %s)",
+            batch_from_block,
+            batch_to_block,
+            to_block,
+        )
 
         events = get_event_batch_with_retries(
             event=event,
@@ -78,32 +90,34 @@ def get_events(
             argument_filters=argument_filters,
         )
         if len(events) > 0:
-            logger.info(f'found %s events in batch', len(events))
+            logger.info(f"found %s events in batch", len(events))
         ret.extend(events)
         batch_from_block = batch_to_block + 1
-    logger.info(f'found %s events in total', len(ret))
+    logger.info(f"found %s events in total", len(ret))
     return ret
 
 
-def get_event_batch_with_retries(event, from_block, to_block, *, argument_filters=None, retries=10):
+def get_event_batch_with_retries(
+    event, from_block, to_block, *, argument_filters=None, retries=10
+):
     initial_retries = retries
     while True:
         try:
             return event.get_logs(
                 fromBlock=from_block,
                 toBlock=to_block,
-                argument_filters=argument_filters
+                argument_filters=argument_filters,
             )
         except Exception as e:
             if retries <= 0:
                 raise e
-            logger.warning('error in get_all_entries: %s, retrying (%s)', e, retries)
+            logger.warning("error in get_all_entries: %s, retrying (%s)", e, retries)
             retries -= 1
             exponential_sleep(initial_retries - retries)
 
 
 def exponential_sleep(attempt, max_sleep_time=256.0):
-    sleep_time = min(2 ** attempt, max_sleep_time)
+    sleep_time = min(2**attempt, max_sleep_time)
     sleep(sleep_time)
 
 
@@ -117,17 +131,21 @@ def retryable(*, max_attempts: int = 10):
                     return func(*args, **kwargs)
                 except Exception as e:
                     if attempt >= max_attempts:
-                        logger.warning('max attempts (%s) exchusted for error: %s', max_attempts, e)
+                        logger.warning(
+                            "max attempts (%s) exchusted for error: %s", max_attempts, e
+                        )
                         raise
                     logger.warning(
-                        'Retryable error (attempt: %s/%s): %s',
+                        "Retryable error (attempt: %s/%s): %s",
                         attempt + 1,
                         max_attempts,
                         e,
-                        )
+                    )
                     exponential_sleep(attempt)
                     attempt += 1
+
         return wrapped
+
     return decorator
 
 
@@ -142,14 +160,11 @@ def to_address(a: Union[bytes, str]) -> AnyAddress:
 @retryable()
 def is_contract(*, web3: Web3, address: str) -> bool:
     code = web3.eth.get_code(to_address(address))
-    return code != b'\x00' and code != b''
+    return code != b"\x00" and code != b""
 
 
 def get_closest_block(
-    web3: Web3,
-    wanted_datetime: datetime,
-    *,
-    not_before: bool = False
+    web3: Web3, wanted_datetime: datetime, *, not_before: bool = False
 ) -> BlockData:
     wanted_timestamp = int(wanted_datetime.timestamp())
     logger.debug("Wanted timestamp: %s", wanted_timestamp)
@@ -161,14 +176,14 @@ def get_closest_block(
     while start_block_number <= end_block_number:
         target_block_number = (start_block_number + end_block_number) // 2
         block: BlockData = web3.eth.get_block(target_block_number)
-        block_timestamp = block['timestamp']
+        block_timestamp = block["timestamp"]
 
         diff = block_timestamp - wanted_timestamp
         logger.debug(
             "target: %s, timestamp: %s, diff %s",
             target_block_number,
             block_timestamp,
-            diff
+            diff,
         )
 
         # Only update block when diff actually gets lower
@@ -179,19 +194,23 @@ def get_closest_block(
 
         if block_timestamp > wanted_timestamp:
             # block is after wanted, move end
-            end_block_number = block['number'] - 1
+            end_block_number = block["number"] - 1
         elif block_timestamp < wanted_timestamp:
             # block is before wanted, move start
-            start_block_number = block['number'] + 1
+            start_block_number = block["number"] + 1
         else:
             # timestamps are exactly the same, just return block
             return block
 
     if closest_block is None:
-        raise LookupError('Unable to determine block closest to ' + wanted_datetime.isoformat())
+        raise LookupError(
+            "Unable to determine block closest to " + wanted_datetime.isoformat()
+        )
 
     if not_before and closest_block["timestamp"] < wanted_timestamp:
-        logger.debug("Block is before wanted timestamp and not_before=True, returning next block")
+        logger.debug(
+            "Block is before wanted timestamp and not_before=True, returning next block"
+        )
         return web3.eth.get_block(closest_block["number"] + 1)
 
     return closest_block
@@ -200,7 +219,7 @@ def get_closest_block(
 def enable_logging(root_name: str = None, level=logging.INFO):
     root = logging.getLogger(root_name)
     root.setLevel(logging.NOTSET)
-    formatter = logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] %(message)s')
+    formatter = logging.Formatter("%(asctime)s - %(name)s [%(levelname)s] %(message)s")
 
     error_handler = logging.StreamHandler(sys.stderr)
     error_handler.setLevel(logging.WARNING)
