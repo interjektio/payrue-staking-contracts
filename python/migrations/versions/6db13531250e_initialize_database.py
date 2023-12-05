@@ -18,7 +18,7 @@ depends_on = None
 
 def upgrade() -> None:
     reward_state_type = postgresql.ENUM(
-        'sent', 'pending', 'unsent', name="rewardstate", create_type=False
+        'sent', 'sending', 'unsent', name="rewardstate", create_type=False
     )
     reward_state_type.create(op.get_bind(), checkfirst=True)
     op.create_table('distribution_round',
@@ -42,6 +42,6 @@ def downgrade() -> None:
     op.drop_table('reward')
     op.drop_table('distribution_round')
     reward_state_type = postgresql.ENUM(
-        'sent', 'pending', 'unsent', name="rewardstate", create_type=False
+        'sent', 'sending', 'unsent', name="rewardstate", create_type=False
     )
     reward_state_type.drop(op.get_bind(), checkfirst=True)
