@@ -7,7 +7,7 @@ import pytest
 from web3 import Web3
 from eth_account import Account
 
-from staking_rewarder.service import StakingRewarder, ABI, Reward
+from staking_rewarder.service import StakingRewarder, ABI, Reward, SlackMessenger
 from staking_rewarder.models import RewardState
 
 token_path = os.path.join(os.path.dirname(__file__), 'abi')
@@ -67,6 +67,9 @@ def staking_rewarder(web3, staking_contract):
     return StakingRewarder(
         web3=web3,
         staking_contract_address=staking_contract.address,
+        messenger=SlackMessenger(
+            webhook_url=os.environ['SLACK_WEBHOOK_URL'],
+        ),
     )
 
 
@@ -162,7 +165,7 @@ def test_get_staker_addresses(web3, staking_contract, token_contract, deployer_a
 
     rewarder = staking_rewarder
     block_number = web3.eth.block_number
-    user_addresses = rewarder.get_staker_addresses(
+    user_addresses = rewarder.get_staker_addresses_from_events(
         start_block_number=1,
         end_block_number=block_number,
     )
