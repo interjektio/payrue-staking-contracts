@@ -12,7 +12,7 @@ __all__ = [
     "KeyValuePair",
     "db_session",
     "autocommit_engine",
-    "Session",
+    "session_factory",
 ]
 
 from .. import config
@@ -21,7 +21,7 @@ from .. import config
 db_connection_string = config["database"]["sqlalchemy.url"]
 
 engine = create_engine(db_connection_string)  # Use connection string from config
-Session = sessionmaker(bind=engine)
-db_session = Session()
+session_factory = sessionmaker(bind=engine)
+db_session = scoped_session(session_factory)
 
 autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")

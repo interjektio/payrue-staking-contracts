@@ -2,24 +2,23 @@ import datetime
 import json
 import logging
 import os
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import List, Any
 
-import requests
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from sqlalchemy import select
 from web3 import Web3
 
+from .messengers import Messenger, SlackMessenger
 from .models import (
     RewardDistribution,
     DistributionRound,
     RewardState,
     KeyValuePair,
     db_session,
-    Session,
+    session_factory,
     autocommit_engine,
 )
 from .utils import to_address, get_web3, get_events, enable_logging, get_closest_block
@@ -43,81 +42,7 @@ class Reward:
     amount_wei: Decimal = Decimal(0)
 
 
-class Messenger(ABC):
-    @abstractmethod
-    def send_message(self, title, message, msg_type, **kwargs):
-        pass
-
-    @abstractmethod
-    def create_attachment_template(self, title, message, msg_type):
-        pass
-
-
-class SlackMessenger(Messenger):
-    def __init__(
-        self,
-        webhook_url: str,
-    ):
-        self.webhook_url = webhook_url
-
-    @staticmethod
-    def message_type(msg_type: str):
-        color = {"danger": "#f72d2d", "good": "#0ce838", "warning": "#f2c744"}
-        return color[msg_type]
-
-    def create_attachment_template(self, title, message, msg_type):
-        color_code = self.message_type(msg_type)
-        now = datetime.datetime.now(tz=datetime.timezone.utc)
-        slack_report_at = "<!date^{timestamp}^{date} at {time}|{date_str}>".format(
-            timestamp=int(now.timestamp()),
-            date_str=now.strftime("%B %d, %Y %H:%M:%S"),
-            date="{date}",
-            time="{time}",
-        )
-        return [
-            {
-                "color": color_code,
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*{title}* ({slack_report_at})",
-                        },
-                    },
-                    {
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": f"{message}"},
-                    },
-                ],
-            }
-        ]
-
-    def send_message(self, title, message, msg_type, **kwargs):
-        """
-        notification_message: str
-        attachments: list
-        """
-        data = {
-            "text": f"{kwargs.get('notification_message', 'Notification')}",
-        }
-        attachments = self.create_attachment_template(title, message, msg_type)
-        if not attachments:
-            raise ValueError("No attachments provided")
-
-        data["attachments"] = attachments
-
-        response = requests.post(
-            self.webhook_url,
-            data=json.dumps(data),
-            headers={"Content-Type": "application/json"},
-        )
-
-        if response.status_code != 200:
-            raise ValueError(
-                f"Request to Slack returned an error {response.status_code}, the response is:\n{response.text}"
-            )
-
+# TODO: add transaction management (ZOPE)
 
 class StakingRewarder:
     def __init__(
@@ -128,7 +53,7 @@ class StakingRewarder:
             abi=ABI, address=to_address(staking_contract_address)
         )
         self.db_session = db_session
-        self.auto_commit_session = Session(bind=autocommit_engine)
+        self.auto_commit_session = session_factory(bind=autocommit_engine)
         self.logger = logging.getLogger(__name__)
         self.min_reward_amount = 0
         self.messenger = messenger
@@ -225,7 +150,9 @@ class StakingRewarder:
             self.last_scanned_block_number = stakers_last_scanned_block_number.value
 
         if end_block_number < self.last_scanned_block_number:
-            return []  # TODO: need to return the stakers stored in DB
+            if not staker_addresses_from_last_scanned_block:
+                return []
+            return staker_addresses_from_last_scanned_block.value
 
         new_stakers = self.get_staker_addresses_from_events(
             self.last_scanned_block_number + 1, end_block_number
@@ -370,6 +297,30 @@ class StakingRewarder:
                 )
                 raise e
 
+        # # THIS STEP OPTIONAL, WRITE LATER
+        # sent_rewards = unsent_rewards
+        # for reward in sent_rewards:
+        #     check that the reward tx was successful and update state to "confirmed" or mined
+
+        # ==========INSTRUCTIONS==============
+        # sending_rewards = select rewards that are in state "sending"
+        # if sending_rewards:
+        #     RAISE HELL. send message to slack. but not every minute!
+        #
+        # # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
+        # with self.transaction_manager:
+        #     unsent_rewards = select from db, should be ordered
+        # try:
+        #     for reward in unsent_rewards:
+        #         with self.transaction_manager:
+        #             update reward state to "sending" IN A TRANSACTION
+        #         send reward with web3
+        #         with self.transaction_manager:
+        #             update reward state to "sent" IN A TRANSACTION and store transaction hash in reward
+        # except Exception as e:
+        #     send message to slack
+        #     raise
+        #
         # # THIS STEP OPTIONAL, WRITE LATER
         # sent_rewards = unsent_rewards
         # for reward in sent_rewards:
