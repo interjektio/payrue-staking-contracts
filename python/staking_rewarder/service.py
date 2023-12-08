@@ -2,13 +2,17 @@ import datetime
 import json
 import logging
 import os
+import transaction
+
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import List, Any
 
+import web3.eth
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker, scoped_session
 from web3 import Web3
 
 from .messengers import Messenger, SlackMessenger
@@ -27,6 +31,9 @@ abi_path = os.path.join(os.path.dirname(__file__), "abi")
 abi_file = os.path.join(abi_path, "PayRueStaking.json")
 ABI = json.loads(open(abi_file).read())
 
+token_abi_file = os.path.join(abi_path, "IERC20.json")
+TOKEN_ABI = json.loads(open(token_abi_file).read())
+
 load_dotenv()
 WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 
@@ -44,20 +51,31 @@ class Reward:
 
 # TODO: add transaction management (ZOPE)
 
+
 class StakingRewarder:
     def __init__(
-        self, *, web3: Web3, staking_contract_address: str, messenger: Messenger
+        self,
+        *,
+        web3: Web3,
+        staking_contract_address: str,
+        messenger: Messenger,
+        session_factory: sessionmaker[Session],
+        token_contract: web3.eth.Contract,
+        reward_distributor_account: web3.Account,
     ):
         self.web3 = web3
         self.staking_contract = self.web3.eth.contract(
             abi=ABI, address=to_address(staking_contract_address)
         )
-        self.db_session = db_session
+        self.session_factory = session_factory
+        self.token_contract = token_contract
+        self.db_session = scoped_session(self.session_factory)
         self.auto_commit_session = session_factory(bind=autocommit_engine)
         self.logger = logging.getLogger(__name__)
         self.min_reward_amount = 0
         self.messenger = messenger
         self.last_scanned_block_number = 24199659
+        self.reward_distributor_account = reward_distributor_account
 
     def get_distribution_round(self, year: int, month: int) -> DistributionRound:
         """
@@ -252,7 +270,11 @@ class StakingRewarder:
         return rewards
 
     def distribute_rewards(self):
-        # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
+        print("token_contract: ", self.token_contract.all_functions())
+        balance = self.token_contract.functions.balanceOf(
+            self.token_contract.address
+        ).call()
+        print("balance: ", balance)
         sending_rewards = (
             self.db_session.execute(
                 select(RewardDistribution).where(
@@ -270,6 +292,7 @@ class StakingRewarder:
             )
             raise Exception("Sending rewards already in progress")
 
+        # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
         with self.auto_commit_session as session:
             with session.begin():
                 unsent_rewards = (
@@ -287,6 +310,7 @@ class StakingRewarder:
                     with session.begin():
                         reward.state = RewardState.sending
                     # send reward with web3
+
                     with session.begin():
                         reward.state = RewardState.sent
             except Exception as e:
@@ -335,12 +359,22 @@ def main():
     staking_contract_address = web3.to_checksum_address(
         "0x0DC8c9726e7651aFa4D7294Fb2A3d7eE1436DD4a"
     )
+    token_contract_address = web3.to_checksum_address(
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+    )
+    token_contract = web3.eth.contract(address=token_contract_address, abi=TOKEN_ABI)
+    reward_distributor_account = web3.eth.account.from_key(
+        "0x2d8d3b7e7d6d3a5c4b7e8a3d7e6d3a5c4b7e8a3d7e6d3a5c4b7e8a3d7e6d3a5c"
+    )
     rewarder = StakingRewarder(
         web3=web3,
         staking_contract_address=staking_contract_address,
         messenger=SlackMessenger(WEBHOOK_URL),
+        session_factory=session_factory,
+        token_contract=token_contract,
+        reward_distributor_account=reward_distributor_account,
     )
-    rewards = rewarder.figure_out_rewards_for_month(
+    rewarder.figure_out_rewards_for_month(
         year=2022,
         month=1,
     )
