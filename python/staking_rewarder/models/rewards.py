@@ -20,6 +20,7 @@ class RewardState(enum.Enum):
     sent = "sent"
     sending = "sending"
     unsent = "unsent"
+    confirmed = "confirmed"
 
 
 class RewardDistribution(Base):
@@ -34,6 +35,7 @@ class RewardDistribution(Base):
         default=RewardState.unsent,
         server_default="unsent",
     )
+    tx_hash = Column(String)
     distribution_round_id = Column(Integer, ForeignKey("distribution_round.id"))
     distribution_round = relationship(
         "DistributionRound", back_populates="reward_distributions"
