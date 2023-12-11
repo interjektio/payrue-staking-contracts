@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from web3 import Web3
 from eth_account import Account
+from sqlalchemy import select
 
 from staking_rewarder.service import StakingRewarder, ABI, Reward, SlackMessenger
 from staking_rewarder.models import RewardState, RewardDistribution
@@ -51,7 +52,7 @@ def bob():
 
 
 @pytest.fixture()
-def reward_distributor_account():
+def reward_distributor_account() -> Account:
     return Account.from_key(
         "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
     )
@@ -78,7 +79,12 @@ def staking_contract(web3, token_contract, deployer_account):
 
 @pytest.fixture()
 def staking_rewarder(
-    web3, staking_contract, token_contract, session_factory, reward_distributor_account
+    web3,
+    staking_contract,
+    token_contract,
+    session_factory,
+    reward_distributor_account,
+    db_engine,
 ):
     return StakingRewarder(
         web3=web3,
@@ -89,6 +95,8 @@ def staking_rewarder(
         session_factory=session_factory,
         token_contract=token_contract,
         reward_distributor_account=reward_distributor_account,
+        last_scanned_block_number=0,
+        auto_commit_engine=db_engine.execution_options(isolation_level="AUTOCOMMIT"),
     )
 
 
@@ -96,13 +104,17 @@ def create_account(private_key):
     return Account.from_key(private_key)
 
 
-def create_stake(amount, token_contract, staking_contract, account):
+def mint_tokens(amount, token_contract, staking_contract, account):
     token_contract.functions.mint(account.address, amount).transact(
         {"from": account.address}
     )
     token_contract.functions.approve(staking_contract.address, amount).transact(
         {"from": account.address}
     )
+
+
+def create_stake(amount, token_contract, staking_contract, account):
+    mint_tokens(amount, token_contract, staking_contract, account)
     staking_contract.functions.stake(amount).transact({"from": account.address})
     staked = staking_contract.functions.staked(account.address).call()
     return staked
@@ -286,89 +298,28 @@ def test_distribute_rewards(
     assert bob_staked == web3.to_wei(70000, "ether")
     assert get_total_amount_staked(staking_contract) == alice_staked + bob_staked
 
-    rewarder = staking_rewarder
     block_number = web3.eth.block_number
     print("block_number: ", block_number)
-    user_addresses = [alice.address, bob.address]
-    rewards = rewarder.get_rewards_at_block(
-        user_addresses=user_addresses,
-        block_number=block_number,
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    rewards = staking_rewarder.figure_out_rewards_for_month(
+        year=now.year,
+        month=now.month,
     )
-    expected_output = [
+    reward_distribution = staking_rewarder.get_unsent_rewards()
+    expected_rewards = [
         Reward(
-            user_address="0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-            percentage=Decimal("0.125"),
-            state=RewardState.unsent,
-        ),
-        Reward(
-            user_address="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-            percentage=Decimal("0.875"),
-            state=RewardState.unsent,
-        ),
+            user_address=reward.user_address,
+            percentage=reward.percentage,
+            state=reward.state,
+            amount_wei=reward.amount_wei,
+        )
+        for reward in reward_distribution
     ]
-    assert rewards == expected_output
-    sum_rewards = sum(r.percentage for r in rewards)
-    print(
-        f"sum_rewards_percentage: {sum_rewards}, "
-        f'total_amount_staked: {web3.from_wei(get_total_amount_staked(staking_contract), "ether")} ETH'
+    amount_to_send = sum([r.amount_wei for r in expected_rewards])
+    assert rewards == expected_rewards
+    assert amount_to_send == web3.to_wei(250_000, "ether")
+    assert sum(r.percentage for r in expected_rewards) == 1
+    mint_tokens(
+        amount_to_send, token_contract, staking_contract, reward_distributor_account
     )
-    assert sum_rewards == 1
-
-    rewards_distribution = []
-    min_reward_amount = 0
-    monthly_revenue = web3.to_wei(1_000_000, "ether")
-    total_reward_to_distribute = int(monthly_revenue * Decimal("0.25"))
-    for reward in rewards:
-        reward.amount_wei = int(total_reward_to_distribute * reward.percentage)
-        if reward.amount_wei < min_reward_amount:
-            continue
-
-        rewards_distribution.append(
-            RewardDistribution(
-                user_address=reward.user_address,
-                percentage=reward.percentage,
-                amount_wei=reward.amount_wei,
-                state=RewardState.unsent,
-            )
-        )
-    print("rewards_distribution: ", rewards_distribution)
-    amount_to_send = sum([r.amount_wei for r in rewards])
-
-    token_contract.functions.mint(
-        reward_distributor_account.address,
-        amount_to_send,
-    ).transact({"from": deployer_account.address})
-    token_contract.functions.approve(
-        staking_contract.address,
-        amount_to_send,
-    ).transact({"from": reward_distributor_account.address})
-    nonce = web3.eth.get_transaction_count(reward_distributor_account.address)
-    for reward in rewards_distribution:
-        tx_hash = token_contract.functions.transfer(
-            reward.user_address,
-            reward.amount_wei,
-        ).transact(
-            {
-                "from": reward_distributor_account.address,
-                "nonce": nonce,
-                "gasPrice": web3.eth.gas_price,
-                "gas": 100000,
-            }
-        )
-        tx_receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-
-        balance_of = token_contract.functions.balanceOf(reward.user_address).call()
-        print(
-            "balance_of receiver: {}".format(reward.user_address),
-            web3.from_wei(balance_of, "ether"),
-        )
-        balance_of_paying_account = token_contract.functions.balanceOf(
-            reward_distributor_account.address
-        ).call()
-        print(
-            "balance_of paying_account: {}".format(reward_distributor_account.address),
-            web3.from_wei(balance_of_paying_account, "ether"),
-        )
-        print("tx_receipt: ", tx_receipt)
-        print("----------------------------")
-        nonce += 1
+    staking_rewarder.distribute_rewards()
