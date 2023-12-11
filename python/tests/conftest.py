@@ -89,7 +89,7 @@ def setup_teardown_database(pytestconfig):
 @pytest.fixture(scope="module")
 def db_engine(setup_teardown_database, pytestconfig):
     test_database_url = pytestconfig.getini("test_database_url")
-    engine = create_engine(test_database_url, echo=True)
+    engine = create_engine(test_database_url, echo=False)
     Base.metadata.create_all(engine)
     yield engine
     engine.dispose()
@@ -99,6 +99,7 @@ def db_engine(setup_teardown_database, pytestconfig):
 def session_factory(db_engine):
     session_factory = sessionmaker(bind=db_engine)
     yield session_factory
+    session_factory.close_all()
 
 
 @pytest.fixture(scope="module")
