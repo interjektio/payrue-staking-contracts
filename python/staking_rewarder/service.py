@@ -7,8 +7,11 @@ import transaction
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import List, Any
+from hexbytes import HexBytes
 
 import web3.eth
+
+from eth_account import Account
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from sqlalchemy import select
@@ -61,7 +64,9 @@ class StakingRewarder:
         messenger: Messenger,
         session_factory: sessionmaker[Session],
         token_contract: web3.eth.Contract,
-        reward_distributor_account: web3.Account,
+        reward_distributor_account: Account,
+        last_scanned_block_number=None,
+        auto_commit_engine=None,
     ):
         self.web3 = web3
         self.staking_contract = self.web3.eth.contract(
@@ -70,11 +75,13 @@ class StakingRewarder:
         self.session_factory = session_factory
         self.token_contract = token_contract
         self.db_session = scoped_session(self.session_factory)
-        self.auto_commit_session = session_factory(bind=autocommit_engine)
+        self.auto_commit_session = session_factory(bind=auto_commit_engine)
         self.logger = logging.getLogger(__name__)
         self.min_reward_amount = 0
         self.messenger = messenger
-        self.last_scanned_block_number = 24199659
+        self.last_scanned_block_number = (
+            24199659 if last_scanned_block_number is None else last_scanned_block_number
+        )
         self.reward_distributor_account = reward_distributor_account
 
     def get_distribution_round(self, year: int, month: int) -> DistributionRound:
@@ -241,7 +248,6 @@ class StakingRewarder:
         end_block_number = closest_block["number"]
 
         staker_addresses = self.get_stakers(end_block_number)
-
         rewards = self.get_rewards_at_block(
             user_addresses=list(staker_addresses),
             block_number=self.last_scanned_block_number,
@@ -269,12 +275,18 @@ class StakingRewarder:
         self.db_session.commit()
         return rewards
 
+    def get_unsent_rewards(self):
+        return (
+            self.db_session.execute(
+                select(RewardDistribution).where(
+                    RewardDistribution.state == RewardState.unsent
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     def distribute_rewards(self):
-        print("token_contract: ", self.token_contract.all_functions())
-        balance = self.token_contract.functions.balanceOf(
-            self.token_contract.address
-        ).call()
-        print("balance: ", balance)
         sending_rewards = (
             self.db_session.execute(
                 select(RewardDistribution).where(
@@ -293,6 +305,9 @@ class StakingRewarder:
             raise Exception("Sending rewards already in progress")
 
         # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
+        nonce = self.web3.eth.get_transaction_count(
+            self.reward_distributor_account.address
+        )
         with self.auto_commit_session as session:
             with session.begin():
                 unsent_rewards = (
@@ -304,15 +319,37 @@ class StakingRewarder:
                     .scalars()
                     .all()
                 )
-            print("unsent_rewards: ", unsent_rewards)
             try:
                 for reward in unsent_rewards:
                     with session.begin():
                         reward.state = RewardState.sending
-                    # send reward with web3
-
+                        # send reward with web3
+                        tx_hash = self.token_contract.functions.transfer(
+                            reward.user_address,
+                            reward.amount_wei,
+                        ).transact(
+                            {
+                                "from": self.reward_distributor_account.address,
+                                "nonce": nonce,
+                                "gasPrice": self.web3.eth.gas_price,
+                                "gas": 100000,
+                            }
+                        )
+                        reward.tx_hash = tx_hash.hex()
+                        nonce += 1
                     with session.begin():
                         reward.state = RewardState.sent
+
+                sent_rewards = unsent_rewards
+                for reward in sent_rewards:
+                    with session.begin():
+                        tx_receipt = self.web3.eth.wait_for_transaction_receipt(
+                            HexBytes(reward.tx_hash)
+                        )
+                        if tx_receipt.status == 0:
+                            raise Exception("Transaction failed")
+                        elif tx_receipt.status == 1:
+                            reward.state = RewardState.confirmed
             except Exception as e:
                 self.messenger.send_message(
                     title="Error while distributing rewards",
@@ -373,6 +410,7 @@ def main():
         session_factory=session_factory,
         token_contract=token_contract,
         reward_distributor_account=reward_distributor_account,
+        auto_commit_engine=autocommit_engine,
     )
     rewarder.figure_out_rewards_for_month(
         year=2022,
