@@ -2,18 +2,16 @@ import datetime
 import json
 import logging
 import os
-import transaction
+import web3.eth
 
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import List, Any
-from hexbytes import HexBytes
 
-import web3.eth
-
-from eth_account import Account
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+from eth_account import Account
+from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker, scoped_session
 from web3 import Web3
@@ -24,7 +22,6 @@ from .models import (
     DistributionRound,
     RewardState,
     KeyValuePair,
-    db_session,
     session_factory,
     autocommit_engine,
 )
@@ -308,60 +305,60 @@ class StakingRewarder:
         nonce = self.web3.eth.get_transaction_count(
             self.reward_distributor_account.address
         )
-        with self.auto_commit_session as session:
-            with session.begin():
-                unsent_rewards = (
-                    session.execute(
-                        select(RewardDistribution).where(
-                            RewardDistribution.state == RewardState.unsent
-                        )
+        with self.auto_commit_session.begin():
+            unsent_rewards = (
+                self.auto_commit_session.execute(
+                    select(RewardDistribution).where(
+                        RewardDistribution.state == RewardState.unsent
                     )
-                    .scalars()
-                    .all()
                 )
-            try:
-                for reward in unsent_rewards:
-                    with session.begin():
-                        reward.state = RewardState.sending
-                        # send reward with web3
-                        tx_hash = self.token_contract.functions.transfer(
-                            reward.user_address,
-                            reward.amount_wei,
-                        ).transact(
-                            {
-                                "from": self.reward_distributor_account.address,
-                                "nonce": nonce,
-                                "gasPrice": self.web3.eth.gas_price,
-                                "gas": 100000,
-                            }
-                        )
-                        reward.tx_hash = tx_hash.hex()
-                        nonce += 1
-                    with session.begin():
-                        reward.state = RewardState.sent
+                .scalars()
+                .all()
+            )
+        print("amount of unsent rewards: ", len(unsent_rewards))
+        try:
+            for reward in unsent_rewards:
+                with self.auto_commit_session.begin():
+                    reward.state = RewardState.sending
+                    user_address = self.web3.to_checksum_address(reward.user_address)
+                    amount_wei = reward.amount_wei
 
-                sent_rewards = unsent_rewards
-                for reward in sent_rewards:
-                    with session.begin():
-                        tx_receipt = self.web3.eth.wait_for_transaction_receipt(
-                            HexBytes(reward.tx_hash)
-                        )
-                        if tx_receipt.status == 0:
-                            raise Exception("Transaction failed")
-                        elif tx_receipt.status == 1:
-                            reward.state = RewardState.confirmed
-            except Exception as e:
-                self.messenger.send_message(
-                    title="Error while distributing rewards",
-                    message=f"Exception: {str(e)}\n",
-                    msg_type="danger",
+                # send reward with web3
+                tx_hash = self.token_contract.functions.transfer(
+                    user_address,
+                    amount_wei,
+                ).transact(
+                    {
+                        "from": self.reward_distributor_account.address,
+                        "nonce": nonce,
+                        "gasPrice": self.web3.eth.gas_price,
+                        "gas": 100000,
+                    }
                 )
-                raise e
+                nonce += 1
+                with self.auto_commit_session.begin():
+                    reward.state = RewardState.sent
+                    reward.tx_hash = tx_hash.hex()
 
-        # # THIS STEP OPTIONAL, WRITE LATER
-        # sent_rewards = unsent_rewards
-        # for reward in sent_rewards:
-        #     check that the reward tx was successful and update state to "confirmed" or mined
+            sent_rewards = unsent_rewards
+            for reward in sent_rewards:
+                with self.auto_commit_session.begin():
+                    tx_receipt = self.web3.eth.wait_for_transaction_receipt(
+                        HexBytes(reward.tx_hash)
+                    )
+                    print("reward: ", reward.tx_hash)
+                    print("tx_receipt: ", tx_receipt)
+                    if tx_receipt.status == 0:
+                        raise Exception("Transaction failed")
+                    elif tx_receipt.status == 1:
+                        reward.state = RewardState.confirmed
+        except Exception as e:
+            self.messenger.send_message(
+                title="Error while distributing rewards",
+                message=f"Exception: {str(e)}\n",
+                msg_type="danger",
+            )
+            raise e
 
         # ==========INSTRUCTIONS==============
         # sending_rewards = select rewards that are in state "sending"
