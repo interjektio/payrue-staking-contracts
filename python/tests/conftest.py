@@ -100,11 +100,3 @@ def session_factory(db_engine):
     session_factory = sessionmaker(bind=db_engine)
     yield session_factory
     session_factory.close_all()
-
-
-@pytest.fixture(scope="module")
-def db_session(session_factory):
-    db_session = scoped_session(session_factory)
-    yield db_session
-    db_session.remove()
-    db_session.close()
