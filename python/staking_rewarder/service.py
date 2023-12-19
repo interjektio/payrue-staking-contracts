@@ -218,58 +218,66 @@ class StakingRewarder:
             self.logger.info("Month has not yet passed")
             return
 
-        # we only distribute rewards once per user per month
-        distribution_round = self.get_distribution_round(
-            year=last_day_of_month.year,
-            month=last_day_of_month.month,
-        )
-        if distribution_round:
-            self.logger.info("Rewards already distributed for this month")
-            return
-
-        distribution_round = DistributionRound(
-            year=year,
-            month=month,
-        )
-        self.db_session.add(distribution_round)
-        self.db_session.flush()
-        closest_block = get_closest_block(
-            self.web3,
-            last_day_of_month,
-        )
-        print(
-            "closest_block: ",
-            closest_block["number"],
-            datetime.datetime.utcfromtimestamp(closest_block["timestamp"]),
-        )
-        end_block_number = closest_block["number"]
-
-        staker_addresses = self.get_stakers(end_block_number)
-        rewards = self.get_rewards_at_block(
-            user_addresses=list(staker_addresses),
-            block_number=self.last_scanned_block_number,
-        )
-        if not rewards:
-            self.logger.info("No rewards to distribute")
-            return
-
-        # TODO: Get the revenue from chains
-        monthly_revenue = self.web3.to_wei(1_000_000, "ether")
-        total_reward_to_distribute = int(monthly_revenue * Decimal("0.25"))
-        for reward in rewards:
-            reward.amount_wei = int(total_reward_to_distribute * reward.percentage)
-            if reward.amount_wei < self.min_reward_amount:
-                continue
-
-            reward_distribution = RewardDistribution(
-                user_address=reward.user_address,
-                percentage=reward.percentage,
-                amount_wei=reward.amount_wei,
-                state=RewardState.unsent,
+        try:
+            # we only distribute rewards once per user per month
+            distribution_round = self.get_distribution_round(
+                year=last_day_of_month.year,
+                month=last_day_of_month.month,
             )
-            reward_distribution.distribution_round_id = distribution_round.id
-            self.db_session.add(reward_distribution)
-        self.db_session.commit()
+            if distribution_round:
+                self.logger.info("Rewards already distributed for this month")
+                return
+
+            distribution_round = DistributionRound(
+                year=year,
+                month=month,
+            )
+            self.db_session.add(distribution_round)
+            self.db_session.flush()
+            closest_block = get_closest_block(
+                self.web3,
+                last_day_of_month,
+            )
+            print(
+                "closest_block: ",
+                closest_block["number"],
+                datetime.datetime.utcfromtimestamp(closest_block["timestamp"]),
+            )
+            end_block_number = closest_block["number"]
+
+            staker_addresses = self.get_stakers(end_block_number)
+            rewards = self.get_rewards_at_block(
+                user_addresses=list(staker_addresses),
+                block_number=self.last_scanned_block_number,
+            )
+            if not rewards:
+                self.logger.info("No rewards to distribute")
+                return
+
+            # TODO: Get the revenue from chains
+            monthly_revenue = self.web3.to_wei(1_000_000, "ether")
+            total_reward_to_distribute = int(monthly_revenue * Decimal("0.25"))
+            for reward in rewards:
+                reward.amount_wei = int(total_reward_to_distribute * reward.percentage)
+                if reward.amount_wei < self.min_reward_amount:
+                    continue
+
+                reward_distribution = RewardDistribution(
+                    user_address=reward.user_address,
+                    percentage=reward.percentage,
+                    amount_wei=reward.amount_wei,
+                    state=RewardState.unsent,
+                )
+                reward_distribution.distribution_round_id = distribution_round.id
+                self.db_session.add(reward_distribution)
+            self.db_session.commit()
+        except Exception as e:
+            self.messenger.send_message(
+                title="Error while figuring out rewards",
+                message=f"Exception: {str(e)}\n",
+                msg_type="danger",
+            )
+            raise e
         return rewards
 
     def get_unsent_rewards(self):
@@ -346,8 +354,6 @@ class StakingRewarder:
                     tx_receipt = self.web3.eth.wait_for_transaction_receipt(
                         HexBytes(reward.tx_hash)
                     )
-                    print("reward: ", reward.tx_hash)
-                    print("tx_receipt: ", tx_receipt)
                     if tx_receipt.status == 0:
                         raise Exception("Transaction failed")
                     elif tx_receipt.status == 1:
