@@ -8,7 +8,7 @@ import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from web3 import HTTPProvider
-
+from sqlalchemy.orm.session import close_all_sessions
 from staking_rewarder.models import Base
 
 INIT_VARIABLES = ["default_database_url", "test_db_name", "test_database_url"]
@@ -77,7 +77,7 @@ def drop_test_database(database_url: str, db_name: str):
     execute_sql(database_url, f"DROP DATABASE IF EXISTS {db_name}")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def setup_teardown_database(pytestconfig):
     default_database_url = pytestconfig.getini("default_database_url")
     db_name = pytestconfig.getini("test_db_name")
@@ -86,7 +86,7 @@ def setup_teardown_database(pytestconfig):
     drop_test_database(default_database_url, db_name)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def db_engine(setup_teardown_database, pytestconfig):
     test_database_url = pytestconfig.getini("test_database_url")
     engine = create_engine(test_database_url, echo=False)
@@ -95,8 +95,10 @@ def db_engine(setup_teardown_database, pytestconfig):
     engine.dispose()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def session_factory(db_engine):
-    session_factory = sessionmaker(bind=db_engine)
+    session_factory = sessionmaker(
+        bind=db_engine, autobegin=False, expire_on_commit=False
+    )
     yield session_factory
-    session_factory.close_all()
+    close_all_sessions()
