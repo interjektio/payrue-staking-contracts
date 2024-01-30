@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 import json
 import os
@@ -9,6 +10,7 @@ from web3 import Web3
 from eth_account import Account
 from sqlalchemy import select
 
+from dateutil.relativedelta import relativedelta
 from staking_rewarder.service import StakingRewarder, ABI, Reward, SlackMessenger
 from staking_rewarder.models import RewardState, RewardDistribution
 
@@ -32,28 +34,28 @@ def web3(hardhat_provider):
 
 @pytest.fixture()
 def deployer_account():
-    return Account.from_key(
+    yield Account.from_key(
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     )
 
 
 @pytest.fixture()
 def alice():
-    return Account.from_key(
+    yield Account.from_key(
         "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
     )
 
 
 @pytest.fixture()
 def bob():
-    return Account.from_key(
+    yield Account.from_key(
         "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
     )
 
 
 @pytest.fixture()
 def reward_distributor_account() -> Account:
-    return Account.from_key(
+    yield Account.from_key(
         "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
     )
 
@@ -63,7 +65,7 @@ def token_contract(web3):
     token_contract_address = web3.to_checksum_address(
         "0x5FbDB2315678afecb367f032d93F642f64180aa3"
     )
-    return web3.eth.contract(address=token_contract_address, abi=TOKEN_ABI)
+    yield web3.eth.contract(address=token_contract_address, abi=TOKEN_ABI)
 
 
 @pytest.fixture()
@@ -74,7 +76,7 @@ def staking_contract(web3, token_contract, deployer_account):
     token_contract.functions.mint(
         staking_contract_address, web3.to_wei(1_000_000, "ether")
     ).transact({"from": deployer_account.address})
-    return web3.eth.contract(abi=ABI, address=staking_contract_address)
+    yield web3.eth.contract(abi=ABI, address=staking_contract_address)
 
 
 @pytest.fixture()
@@ -86,7 +88,7 @@ def staking_rewarder(
     reward_distributor_account,
     db_engine,
 ):
-    return StakingRewarder(
+    yield StakingRewarder(
         web3=web3,
         staking_contract_address=staking_contract.address,
         messenger=SlackMessenger(
@@ -96,8 +98,16 @@ def staking_rewarder(
         token_contract=token_contract,
         reward_distributor_account=reward_distributor_account,
         last_scanned_block_number=0,
-        auto_commit_engine=db_engine.execution_options(isolation_level="AUTOCOMMIT"),
+        auto_commit_engine=db_engine.execution_options(isolation_level="SERIALIZABLE"),
     )
+
+
+@pytest.fixture()
+def imitated_has_month_passed(monkeypatch, staking_rewarder):
+    def mocked_has_month_passed(_: datetime):
+        return True
+
+    monkeypatch.setattr(staking_rewarder, "has_month_passed", mocked_has_month_passed)
 
 
 def create_account(private_key):
@@ -122,6 +132,39 @@ def create_stake(amount, token_contract, staking_contract, account):
 
 def get_total_amount_staked(staking_contract):
     return staking_contract.functions.totalAmountStaked().call()
+
+
+def get_token_balance(token_contract, user_address):
+    return token_contract.functions.balanceOf(user_address).call()
+
+
+@dataclasses.dataclass
+class StakerDetail:
+    user: Account
+    amount_ether: int
+    user_previous_staked: int = 0
+
+
+def create_and_assert_stake(
+    stakers_detail: [StakerDetail],
+    token_contract,
+    staking_contract,
+    total_staked: dict,
+    web3,
+):
+    for staker in stakers_detail:
+        amount_wei = web3.to_wei(staker.amount_ether, "ether")
+        user_staked = create_stake(
+            amount_wei, token_contract, staking_contract, staker.user
+        )
+        user_previous_staked_wei = web3.to_wei(staker.user_previous_staked, "ether")
+        assert user_staked == amount_wei + user_previous_staked_wei
+        total_staked.setdefault(staker.user.address, {"amount_wei": 0}).update(
+            {"amount_wei": user_staked}
+        )
+        expected_total_staked = sum([v["amount_wei"] for k, v in total_staked.items()])
+        assert get_total_amount_staked(staking_contract) == expected_total_staked
+    return total_staked, token_contract, staking_contract
 
 
 def test_stake(web3, staking_contract, token_contract, deployer_account, alice):
@@ -276,13 +319,14 @@ def test_distribute_rewards(
     staking_rewarder,
     bob,
     reward_distributor_account,
+    imitated_has_month_passed,
 ):
     total_supply = token_contract.functions.totalSupply().call()
-    print("total_supply: ", web3.from_wei(total_supply, "ether"))
-    balance_of = token_contract.functions.balanceOf(
+    assert total_supply == web3.to_wei(1_000_000, "ether")
+    balance_of_reward_distributor = token_contract.functions.balanceOf(
         reward_distributor_account.address
     ).call()
-    print("balance_of: ", web3.from_wei(balance_of, "ether"))
+    assert balance_of_reward_distributor == 0
     amount = web3.to_wei(10000, "ether")
     alice_staked = create_stake(amount, token_contract, staking_contract, alice)
     assert alice_staked == amount
@@ -297,7 +341,6 @@ def test_distribute_rewards(
     bob_staked = create_stake(amount, token_contract, staking_contract, bob)
     assert bob_staked == web3.to_wei(70000, "ether")
     assert get_total_amount_staked(staking_contract) == alice_staked + bob_staked
-
     block_number = web3.eth.block_number
     print("block_number: ", block_number)
     now = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -323,3 +366,296 @@ def test_distribute_rewards(
         amount_to_send, token_contract, staking_contract, reward_distributor_account
     )
     staking_rewarder.distribute_rewards()
+    reward_distributor_balance = get_token_balance(
+        token_contract, reward_distributor_account.address
+    )
+    assert reward_distributor_balance == 0
+    for reward in rewards:
+        assert reward.amount_wei == get_token_balance(
+            token_contract, reward.user_address
+        )
+
+    # TODO: actually see that the rewards are distributed!
+    # check that token balances for stakers have increased
+
+    # TODO: test that rewards are not distributed again after they have been distributed once!
+    # --^ this should probably be another test
+    staking_rewarder.distribute_rewards()
+    # test nothing distributed
+
+
+# TODO: Test that rewards are not sent if the month has not passed
+def test_distribute_reward_when_the_month_has_not_passed(
+    web3,
+    token_contract,
+    staking_contract,
+    deployer_account,
+    alice,
+    staking_rewarder,
+    bob,
+    reward_distributor_account,
+):
+    total_supply = token_contract.functions.totalSupply().call()
+    assert total_supply == web3.to_wei(1_000_000, "ether")
+    balance_of_reward_distributor = token_contract.functions.balanceOf(
+        reward_distributor_account.address
+    ).call()
+    assert balance_of_reward_distributor == 0
+    amount = web3.to_wei(10000, "ether")
+    alice_staked = create_stake(amount, token_contract, staking_contract, alice)
+    assert alice_staked == amount
+    assert get_total_amount_staked(staking_contract) == alice_staked
+
+    amount = web3.to_wei(20000, "ether")
+    bob_staked = create_stake(amount, token_contract, staking_contract, bob)
+    assert bob_staked == amount
+    assert get_total_amount_staked(staking_contract) == alice_staked + bob_staked
+
+    amount = web3.to_wei(50000, "ether")
+    bob_staked = create_stake(amount, token_contract, staking_contract, bob)
+    assert bob_staked == web3.to_wei(70000, "ether")
+    assert get_total_amount_staked(staking_contract) == alice_staked + bob_staked
+
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    rewards = staking_rewarder.figure_out_rewards_for_month(
+        year=now.year,
+        month=now.month,
+    )
+    reward_distribution = staking_rewarder.get_unsent_rewards()
+    assert reward_distribution == []
+    expected_rewards = None
+    assert rewards == expected_rewards
+
+
+# TODO: Test multiple distribution rounds, use hardhat time travel evm_increaseTime
+def test_multiple_distribution_rounds(
+    web3,
+    token_contract,
+    staking_contract,
+    deployer_account,
+    alice,
+    staking_rewarder,
+    bob,
+    reward_distributor_account,
+    imitated_has_month_passed,
+):
+    total_supply = token_contract.functions.totalSupply().call()
+    assert total_supply == web3.to_wei(1_000_000, "ether")
+    balance_of_reward_distributor = token_contract.functions.balanceOf(
+        reward_distributor_account.address
+    ).call()
+    assert balance_of_reward_distributor == 0
+    total_staked = {}
+    stakers_detail = [
+        StakerDetail(user=alice, amount_ether=10000, user_previous_staked=0),
+        StakerDetail(user=bob, amount_ether=20000, user_previous_staked=0),
+        StakerDetail(user=bob, amount_ether=50000, user_previous_staked=20000),
+    ]
+    total_staked, token_contract, staking_contract = create_and_assert_stake(
+        stakers_detail, token_contract, staking_contract, total_staked, web3
+    )
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    rewards = staking_rewarder.figure_out_rewards_for_month(
+        year=now.year,
+        month=now.month,
+    )
+    reward_distribution = staking_rewarder.get_unsent_rewards()
+    expected_rewards = [
+        Reward(
+            user_address=reward.user_address,
+            percentage=reward.percentage,
+            state=reward.state,
+            amount_wei=reward.amount_wei,
+        )
+        for reward in reward_distribution
+    ]
+    amount_to_send = sum([r.amount_wei for r in expected_rewards])
+    assert rewards == expected_rewards
+    assert amount_to_send == web3.to_wei(250_000, "ether")
+    assert sum(r.percentage for r in expected_rewards) == 1
+    mint_tokens(
+        amount_to_send, token_contract, staking_contract, reward_distributor_account
+    )
+    staking_rewarder.distribute_rewards()
+    reward_distributor_balance = get_token_balance(
+        token_contract, reward_distributor_account.address
+    )
+    assert reward_distributor_balance == 0
+    for reward in rewards:
+        assert reward.amount_wei == get_token_balance(
+            token_contract, reward.user_address
+        )
+
+    # SECOND DISTRIBUTION ROUND
+    # time increase for next distribution round
+    first_date_next_month = now + relativedelta(
+        months=1, day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    time_increase_seconds = (first_date_next_month - now).total_seconds()
+    web3.provider.make_request("evm_increaseTime", [time_increase_seconds])
+    # check next block timestamp
+    latest_block_datetime = datetime.datetime.fromtimestamp(
+        web3.eth.get_block(web3.eth.block_number)["timestamp"], tz=datetime.timezone.utc
+    )
+    assert (latest_block_datetime.year, latest_block_datetime.month) == (
+        now.year,
+        now.month,
+    )
+    stakers_detail = [
+        StakerDetail(
+            user=alice,
+            amount_ether=10000,
+            user_previous_staked=web3.from_wei(
+                total_staked[alice.address]["amount_wei"], "ether"
+            ),
+        ),
+        StakerDetail(
+            user=bob,
+            amount_ether=20000,
+            user_previous_staked=web3.from_wei(
+                total_staked[bob.address]["amount_wei"], "ether"
+            ),
+        ),
+        StakerDetail(
+            user=bob,
+            amount_ether=50000,
+            user_previous_staked=web3.from_wei(
+                total_staked[bob.address]["amount_wei"], "ether"
+            )
+            + 20000,
+        ),
+    ]
+    total_staked, token_contract, staking_contract = create_and_assert_stake(
+        stakers_detail, token_contract, staking_contract, total_staked, web3
+    )
+
+    # check next block timestamp
+    latest_block_datetime = datetime.datetime.fromtimestamp(
+        web3.eth.get_block(web3.eth.block_number)["timestamp"], tz=datetime.timezone.utc
+    )
+    assert (latest_block_datetime.year, latest_block_datetime.month) == (
+        first_date_next_month.year,
+        first_date_next_month.month,
+    )
+    rewards = staking_rewarder.figure_out_rewards_for_month(
+        year=first_date_next_month.year,
+        month=first_date_next_month.month,
+    )
+    reward_distribution = staking_rewarder.get_unsent_rewards()
+    expected_rewards = [
+        Reward(
+            user_address=reward.user_address,
+            percentage=reward.percentage,
+            state=reward.state,
+            amount_wei=reward.amount_wei,
+        )
+        for reward in reward_distribution
+    ]
+    amount_to_send = sum([r.amount_wei for r in expected_rewards])
+    assert rewards == expected_rewards
+    assert amount_to_send == web3.to_wei(250_000, "ether")
+    assert sum(r.percentage for r in expected_rewards) == 1
+    mint_tokens(
+        amount_to_send, token_contract, staking_contract, reward_distributor_account
+    )
+    staking_rewarder.distribute_rewards()
+    reward_distributor_balance = get_token_balance(
+        token_contract, reward_distributor_account.address
+    )
+    assert reward_distributor_balance == 0
+    for reward in rewards:
+        previous_reward_amount = reward.amount_wei
+        assert (
+            reward.amount_wei
+            == get_token_balance(token_contract, reward.user_address)
+            - previous_reward_amount
+        )
+
+    staking_rewarder.distribute_rewards()
+
+    # THIRD DISTRIBUTION ROUND
+    # time increase for next distribution round
+    first_date_of_month_after_next_month = first_date_next_month + relativedelta(
+        months=1, day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    time_increase_seconds = (
+        first_date_of_month_after_next_month - first_date_next_month
+    ).total_seconds()
+    web3.provider.make_request("evm_increaseTime", [time_increase_seconds])
+    # check next block timestamp
+    latest_block_datetime = datetime.datetime.fromtimestamp(
+        web3.eth.get_block(web3.eth.block_number)["timestamp"], tz=datetime.timezone.utc
+    )
+    assert (latest_block_datetime.year, latest_block_datetime.month) == (
+        first_date_next_month.year,
+        first_date_next_month.month,
+    )
+    stakers_detail = [
+        StakerDetail(
+            user=alice,
+            amount_ether=10000,
+            user_previous_staked=web3.from_wei(
+                total_staked[alice.address]["amount_wei"], "ether"
+            ),
+        ),
+        StakerDetail(
+            user=bob,
+            amount_ether=20000,
+            user_previous_staked=web3.from_wei(
+                total_staked[bob.address]["amount_wei"], "ether"
+            ),
+        ),
+        StakerDetail(
+            user=bob,
+            amount_ether=50000,
+            user_previous_staked=web3.from_wei(
+                total_staked[bob.address]["amount_wei"], "ether"
+            )
+            + 20000,
+        ),
+    ]
+    create_and_assert_stake(
+        stakers_detail, token_contract, staking_contract, total_staked, web3
+    )
+
+    # check next block timestamp
+    latest_block_datetime = datetime.datetime.fromtimestamp(
+        web3.eth.get_block(web3.eth.block_number)["timestamp"], tz=datetime.timezone.utc
+    )
+    assert (latest_block_datetime.year, latest_block_datetime.month) == (
+        first_date_of_month_after_next_month.year,
+        first_date_of_month_after_next_month.month,
+    )
+    rewards = staking_rewarder.figure_out_rewards_for_month(
+        year=first_date_of_month_after_next_month.year,
+        month=first_date_of_month_after_next_month.month,
+    )
+    reward_distribution = staking_rewarder.get_unsent_rewards()
+    expected_rewards = [
+        Reward(
+            user_address=reward.user_address,
+            percentage=reward.percentage,
+            state=reward.state,
+            amount_wei=reward.amount_wei,
+        )
+        for reward in reward_distribution
+    ]
+    amount_to_send = sum([r.amount_wei for r in expected_rewards])
+    assert rewards == expected_rewards
+    assert amount_to_send == web3.to_wei(250_000, "ether")
+    assert sum(r.percentage for r in expected_rewards) == 1
+    mint_tokens(
+        amount_to_send, token_contract, staking_contract, reward_distributor_account
+    )
+    staking_rewarder.distribute_rewards()
+    reward_distributor_balance = get_token_balance(
+        token_contract, reward_distributor_account.address
+    )
+    assert reward_distributor_balance == 0
+    for reward in rewards:
+        previous_reward_amount = reward.amount_wei * 2
+        assert (
+            reward.amount_wei
+            == get_token_balance(token_contract, reward.user_address)
+            - previous_reward_amount
+        )
