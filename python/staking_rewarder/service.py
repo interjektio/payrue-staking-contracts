@@ -71,7 +71,9 @@ class StakingRewarder:
         )
         self.session_factory = session_factory
         self.token_contract = token_contract
-        self.db_session = scoped_session(self.session_factory)
+        # TODO: remove auto_commit_session, just use session_factory. don't need autocommit_engine either
+        # it should just use session_factory
+        self.db_session = self.session_factory
         self.auto_commit_session = session_factory(bind=auto_commit_engine)
         self.logger = logging.getLogger(__name__)
         self.min_reward_amount = 0
@@ -93,7 +95,8 @@ class StakingRewarder:
         stmt = select(DistributionRound).where(
             *conditions,
         )
-        return self.db_session.execute(stmt).scalars().first()
+        with self.session_factory.begin() as session:
+            return session.execute(stmt).scalars().first()
 
     def get_rewards_at_block(
         self,
@@ -160,46 +163,47 @@ class StakingRewarder:
         Get stakers by address
         :return:
         """
+        with self.session_factory.begin() as session:
+            stakers_last_scanned_block_number = session.get(
+                KeyValuePair, "stakers_last_scanned_block_number"
+            )
 
-        stakers_last_scanned_block_number = self.db_session.get(
-            KeyValuePair, "stakers_last_scanned_block_number"
-        )
+            staker_addresses_from_last_scanned_block = session.get(
+                KeyValuePair, "staker_addresses"
+            )
+            if stakers_last_scanned_block_number:
+                self.last_scanned_block_number = stakers_last_scanned_block_number.value
 
-        staker_addresses_from_last_scanned_block = self.db_session.get(
-            KeyValuePair, "staker_addresses"
-        )
-        if stakers_last_scanned_block_number:
-            self.last_scanned_block_number = stakers_last_scanned_block_number.value
+            if end_block_number < self.last_scanned_block_number:
+                if not staker_addresses_from_last_scanned_block:
+                    return []
+                return staker_addresses_from_last_scanned_block.value
 
-        if end_block_number < self.last_scanned_block_number:
-            if not staker_addresses_from_last_scanned_block:
-                return []
+            new_stakers = self.get_staker_addresses_from_events(
+                self.last_scanned_block_number + 1, end_block_number
+            )
+            self.last_scanned_block_number = end_block_number
+
+            if (
+                staker_addresses_from_last_scanned_block
+                and stakers_last_scanned_block_number
+            ):
+                staker_addresses_from_last_scanned_block.value = list(new_stakers)
+                stakers_last_scanned_block_number.value = self.last_scanned_block_number
+            else:
+                staker_addresses_from_last_scanned_block = KeyValuePair(
+                    key="staker_addresses",
+                    value=list(new_stakers),
+                )
+                stakers_last_scanned_block_number = KeyValuePair(
+                    key="stakers_last_scanned_block_number",
+                    value=self.last_scanned_block_number,
+                )
+                session.add(staker_addresses_from_last_scanned_block)
+                session.add(stakers_last_scanned_block_number)
+            session.flush()
+
             return staker_addresses_from_last_scanned_block.value
-
-        new_stakers = self.get_staker_addresses_from_events(
-            self.last_scanned_block_number + 1, end_block_number
-        )
-        self.last_scanned_block_number = end_block_number
-
-        if (
-            staker_addresses_from_last_scanned_block
-            and stakers_last_scanned_block_number
-        ):
-            staker_addresses_from_last_scanned_block.value = list(new_stakers)
-            stakers_last_scanned_block_number.value = self.last_scanned_block_number
-        else:
-            staker_addresses_from_last_scanned_block = KeyValuePair(
-                key="staker_addresses",
-                value=list(new_stakers),
-            )
-            stakers_last_scanned_block_number = KeyValuePair(
-                key="stakers_last_scanned_block_number",
-                value=self.last_scanned_block_number,
-            )
-            self.db_session.add(staker_addresses_from_last_scanned_block)
-            self.db_session.add(stakers_last_scanned_block_number)
-        self.db_session.flush()
-        return staker_addresses_from_last_scanned_block.value
 
     def figure_out_rewards_for_month(
         self,
@@ -227,50 +231,56 @@ class StakingRewarder:
             if distribution_round:
                 self.logger.info("Rewards already distributed for this month")
                 return
-
-            distribution_round = DistributionRound(
-                year=year,
-                month=month,
-            )
-            self.db_session.add(distribution_round)
-            self.db_session.flush()
-            closest_block = get_closest_block(
-                self.web3,
-                last_day_of_month,
-            )
-            print(
-                "closest_block: ",
-                closest_block["number"],
-                datetime.datetime.utcfromtimestamp(closest_block["timestamp"]),
-            )
-            end_block_number = closest_block["number"]
-
-            staker_addresses = self.get_stakers(end_block_number)
-            rewards = self.get_rewards_at_block(
-                user_addresses=list(staker_addresses),
-                block_number=self.last_scanned_block_number,
-            )
-            if not rewards:
-                self.logger.info("No rewards to distribute")
-                return
-
-            # TODO: Get the revenue from chains
-            monthly_revenue = self.web3.to_wei(1_000_000, "ether")
-            total_reward_to_distribute = int(monthly_revenue * Decimal("0.25"))
-            for reward in rewards:
-                reward.amount_wei = int(total_reward_to_distribute * reward.percentage)
-                if reward.amount_wei < self.min_reward_amount:
-                    continue
-
-                reward_distribution = RewardDistribution(
-                    user_address=reward.user_address,
-                    percentage=reward.percentage,
-                    amount_wei=reward.amount_wei,
-                    state=RewardState.unsent,
+            with self.session_factory.begin() as session:
+                distribution_round = DistributionRound(
+                    year=year,
+                    month=month,
                 )
-                reward_distribution.distribution_round_id = distribution_round.id
-                self.db_session.add(reward_distribution)
-            self.db_session.commit()
+                session.add(distribution_round)
+                session.flush()
+                distribution_round = session.get(
+                    DistributionRound, distribution_round.id
+                )
+                closest_block = get_closest_block(
+                    self.web3,
+                    last_day_of_month,
+                )
+                print(
+                    "closest_block: ",
+                    closest_block["number"],
+                    datetime.datetime.utcfromtimestamp(closest_block["timestamp"]),
+                )
+                end_block_number = closest_block["number"]
+
+                staker_addresses = self.get_stakers(end_block_number)
+                rewards = self.get_rewards_at_block(
+                    user_addresses=list(staker_addresses),
+                    block_number=self.last_scanned_block_number,
+                )
+                if not rewards:
+                    self.logger.info("No rewards to distribute")
+                    return
+
+                # TODO: Get the revenue from chains
+                monthly_revenue = self.web3.to_wei(1_000_000, "ether")
+                total_reward_to_distribute = int(monthly_revenue * Decimal("0.25"))
+                for reward in rewards:
+                    reward.amount_wei = int(
+                        total_reward_to_distribute * reward.percentage
+                    )
+                    if reward.amount_wei < self.min_reward_amount:
+                        continue
+
+                    reward_distribution = RewardDistribution(
+                        user_address=reward.user_address,
+                        percentage=reward.percentage,
+                        amount_wei=reward.amount_wei,
+                        state=RewardState.unsent,
+                    )
+                    reward_distribution.distribution_round_id = distribution_round.id
+                    session.add(reward_distribution)
+                session.flush()
+                # session.commit()
         except Exception as e:
             self.messenger.send_message(
                 title="Error while figuring out rewards",
@@ -281,41 +291,9 @@ class StakingRewarder:
         return rewards
 
     def get_unsent_rewards(self):
-        return (
-            self.db_session.execute(
-                select(RewardDistribution).where(
-                    RewardDistribution.state == RewardState.unsent
-                )
-            )
-            .scalars()
-            .all()
-        )
-
-    def distribute_rewards(self):
-        sending_rewards = (
-            self.db_session.execute(
-                select(RewardDistribution).where(
-                    RewardDistribution.state == RewardState.sending
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if sending_rewards:
-            self.messenger.send_message(
-                title="Error while distributing rewards",
-                message="Sending rewards already in progress",
-                msg_type="danger",
-            )
-            raise Exception("Sending rewards already in progress")
-
-        # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
-        nonce = self.web3.eth.get_transaction_count(
-            self.reward_distributor_account.address
-        )
-        with self.auto_commit_session.begin():
-            unsent_rewards = (
-                self.auto_commit_session.execute(
+        with self.session_factory.begin() as session:
+            return (
+                session.execute(
                     select(RewardDistribution).where(
                         RewardDistribution.state == RewardState.unsent
                     )
@@ -323,14 +301,65 @@ class StakingRewarder:
                 .scalars()
                 .all()
             )
-        print("amount of unsent rewards: ", len(unsent_rewards))
+
+    def distribute_rewards(self):
+        with self.session_factory.begin() as session:
+            sending_rewards = (
+                session.execute(
+                    select(RewardDistribution).where(
+                        RewardDistribution.state == RewardState.sending
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if sending_rewards:
+                self.messenger.send_message(
+                    title="Error while distributing rewards",
+                    message="Sending rewards already in progress",
+                    msg_type="danger",
+                )
+                raise Exception("Sending rewards already in progress")
+
+        # TODO: maybe set nonces. or should it be in figure_out_rewards? THIS CAN BE DONE LATER
+        nonce = self.web3.eth.get_transaction_count(
+            self.reward_distributor_account.address
+        )
+
+        with self.session_factory.begin() as session:
+            unsent_rewards = (
+                session.execute(
+                    select(RewardDistribution).where(
+                        RewardDistribution.state == RewardState.unsent
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            print("number of unsent rewards: ", len(unsent_rewards))
         try:
+            sent_rewards = []
             for reward in unsent_rewards:
-                with self.auto_commit_session.begin():
+                with self.session_factory.begin() as session:
+                    reward = session.merge(reward)
                     reward.state = RewardState.sending
                     user_address = self.web3.to_checksum_address(reward.user_address)
                     amount_wei = reward.amount_wei
+                    reward_id = reward.id
+                    session.commit()
 
+                # Sanity check so it really got marked as sending before actually sending it
+                # probably not necessary
+                with self.session_factory.begin() as session:
+                    reward = session.execute(
+                        select(RewardDistribution).where(
+                            RewardDistribution.id == reward_id
+                        )
+                    ).scalar_one()
+                    if reward.state != RewardState.sending:
+                        raise Exception(
+                            f"Reward({reward_id}) state is not sending (it's {reward.state})"
+                        )
                 # send reward with web3
                 tx_hash = self.token_contract.functions.transfer(
                     user_address,
@@ -339,32 +368,46 @@ class StakingRewarder:
                     {
                         "from": self.reward_distributor_account.address,
                         "nonce": nonce,
-                        "gasPrice": self.web3.eth.gas_price,
-                        "gas": 100000,
                     }
                 )
                 nonce += 1
-                with self.auto_commit_session.begin():
+                with self.session_factory.begin() as session:
+                    reward = session.merge(reward)
                     reward.state = RewardState.sent
                     reward.tx_hash = tx_hash.hex()
+                    session.commit()
 
-            sent_rewards = unsent_rewards
+                sent_rewards.append(reward)
+
             for reward in sent_rewards:
-                with self.auto_commit_session.begin():
+                with self.session_factory.begin() as session:
+                    reward = session.merge(reward)
                     tx_receipt = self.web3.eth.wait_for_transaction_receipt(
-                        HexBytes(reward.tx_hash)
+                        reward.tx_hash
                     )
                     if tx_receipt.status == 0:
                         raise Exception("Transaction failed")
                     elif tx_receipt.status == 1:
                         reward.state = RewardState.confirmed
+                        session.commit()
+
+                with self.session_factory.begin() as session:
+                    reward = session.execute(
+                        select(RewardDistribution).where(
+                            RewardDistribution.id == reward.id
+                        )
+                    ).scalar_one()
+                    if reward.state != RewardState.confirmed:
+                        raise Exception(
+                            f"Reward({reward_id}) state is not confirmed (it's {reward.state})"
+                        )
         except Exception as e:
             self.messenger.send_message(
                 title="Error while distributing rewards",
                 message=f"Exception: {str(e)}\n",
                 msg_type="danger",
             )
-            raise e
+            self.logger.warning(e)
 
         # ==========INSTRUCTIONS==============
         # sending_rewards = select rewards that are in state "sending"
